@@ -15,7 +15,7 @@ ENV NODE_ENV=development
 ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY web/ .
-COPY packages-ai/src/delivery/grpc/proto/chunking.proto proto/chunking.proto
+COPY packages-ai/src/document_chunk/delivery/grpc/proto/chunking.proto proto/chunking.proto
 
 CMD ["pnpm", "dev", "--hostname", "0.0.0.0"]
 
@@ -23,7 +23,7 @@ CMD ["pnpm", "dev", "--hostname", "0.0.0.0"]
 FROM deps AS builder
 
 COPY web/ .
-COPY packages-ai/src/delivery/grpc/proto/chunking.proto proto/chunking.proto
+COPY packages-ai/src/document_chunk/delivery/grpc/proto/chunking.proto proto/chunking.proto
 
 ENV NEXT_TELEMETRY_DISABLED=1
 

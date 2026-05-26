@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { randomUUID } from "crypto";
 import { LTI_CONFIG } from "@/lib/lti";
 import { redis } from "@/lib/redis";
 
@@ -69,14 +70,14 @@ async function handleLogin(request: NextRequest) {
     );
   }
 
-  const nonce = crypto.randomUUID();
-  const state = crypto.randomUUID();
+  const nonce = randomUUID();
+  const state = randomUUID();
 
   // ── Store XBlock custom params in Redis for launch route ──
   await redis.setex(
     `lti:state:${state}`,
     300, // 5 phút TTL
-    JSON.stringify({ custom, course_id: courseId, target_link_uri: targetLinkUri })
+    JSON.stringify({ nonce, custom, course_id: courseId, target_link_uri: targetLinkUri })
   );
 
   // Build OIDC auth request URL

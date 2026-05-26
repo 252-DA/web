@@ -236,23 +236,50 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Read XBlock custom params from Redis (stored by login route) ──
+    if (!state) {
+      return new Response(
+        JSON.stringify({ error: "Missing OIDC state parameter" }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    const stateData = await redis.getdel(`lti:state:${state}`);
+    if (!stateData) {
+      return new Response(
+        JSON.stringify({ error: "Invalid or expired OIDC state (Potential CSRF)" }),
+        { status: 403, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
     let xblockCustom: Record<string, string> = {};
     let xblockCourseId = "";
-    if (state) {
-      const stateData = await redis.getdel(`lti:state:${state}`);
-      if (stateData) {
-        try {
-          const parsed = JSON.parse(stateData);
-          if (parsed.custom) {
-            xblockCustom = parsePipeCustom(parsed.custom);
-          }
-          xblockCourseId = parsed.course_id || "";
-        } catch { /* ignore malformed state */ }
+    let expectedNonce = "";
+
+    try {
+      const parsed = JSON.parse(stateData);
+      if (parsed.custom) {
+        xblockCustom = parsePipeCustom(parsed.custom);
       }
+      xblockCourseId = parsed.course_id || "";
+      expectedNonce = parsed.nonce || "";
+    } catch {
+      return new Response(
+        JSON.stringify({ error: "Malformed OIDC state data in session" }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
     }
 
     // ── Validate JWT from platform ──
     const payload = await verifyPlatformJwt(idToken);
+
+    // ── Verify nonce to prevent replay attacks ──
+    if (!payload.nonce || payload.nonce !== expectedNonce) {
+      return new Response(
+        JSON.stringify({ error: "OIDC nonce mismatch (Potential Replay Attack)" }),
+        { status: 403, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
 
     const deploymentId = payload[DEPLOYMENT_CLAIM];
     if (
@@ -352,6 +379,15 @@ export async function POST(request: NextRequest) {
       maxAge: SESSION_TTL,
       path: "/",
     });
+
+    // ── Enable CHIPS (Cookies Having Independent Partitioned State) ──
+    if (secure && sameSite === "none") {
+      const setCookie = response.headers.get("Set-Cookie");
+      if (setCookie) {
+        response.headers.set("Set-Cookie", `${setCookie}; Partitioned`);
+      }
+    }
+
 
     return response;
   } catch (err: unknown) {
