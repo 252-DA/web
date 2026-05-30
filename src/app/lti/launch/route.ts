@@ -7,18 +7,16 @@ import {
   jwtVerify,
   type JWTPayload,
 } from "jose";
-import { Pool } from "pg";
 import { redis } from "@/lib/redis";
 import { LTI_CONFIG } from "@/lib/lti";
 import { LtiSession, SESSION_TTL, sessionKey } from "@/lib/session";
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || "postgresql://postgres:postgres@postgres:5432/chunking",
-});
+import { coreApi, CoreApiError } from "@/lib/core-api";
 
 const CUSTOM_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/custom";
 const CONTEXT_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/context";
 const DEPLOYMENT_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/deployment_id";
+const RESOURCE_LINK_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/resource_link";
+const AGS_CLAIM = "https://purl.imsglobal.org/spec/lti-ags/claim/endpoint";
 const ROLES_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/roles";
 type CookieSameSite = "lax" | "strict" | "none";
 type Jwk = {
@@ -31,6 +29,15 @@ type Jwk = {
 type Jwks = {
   keys?: Jwk[];
 };
+type LaunchSyncResponse = {
+  internalUserId: string;
+  internalCourseId: string;
+  lmsCourseRefId?: string;
+  courseRole: "instructor" | "learner" | "ta" | "observer";
+  resourceLinkId?: string;
+};
+type PlatformRole = "instructor" | "learner" | "administrator";
+type CourseRole = "instructor" | "learner" | "ta" | "observer";
 
 function parsePipeCustom(custom: string): Record<string, string> {
   const parsed: Record<string, string> = {};
@@ -62,6 +69,39 @@ function parseRoles(value: unknown): string[] {
     return value.map(String);
   }
   return typeof value === "string" ? [value] : [];
+}
+
+function mapRoles(roles: string[]): { role: PlatformRole; courseRole: CourseRole } {
+  const joined = roles.join(" ");
+  if (/Administrator/i.test(joined)) {
+    return { role: "administrator", courseRole: "instructor" };
+  }
+  if (/Instructor|Faculty|Staff/i.test(joined)) {
+    return { role: "instructor", courseRole: "instructor" };
+  }
+  if (/TeachingAssistant|Teaching Assistant|TA/i.test(joined)) {
+    return { role: "instructor", courseRole: "ta" };
+  }
+  if (/Observer|Mentor/i.test(joined)) {
+    return { role: "learner", courseRole: "observer" };
+  }
+  if (/Learner|Student|Member/i.test(joined)) {
+    return { role: "learner", courseRole: "learner" };
+  }
+  throw new CoreApiError(403, "Unsupported LTI role");
+}
+
+function parseTargetKind(value: string | undefined): LtiSession["targetKind"] | undefined {
+  if (
+    value === "lesson" ||
+    value === "card" ||
+    value === "quiz_set" ||
+    value === "chat" ||
+    value === "video"
+  ) {
+    return value;
+  }
+  return undefined;
 }
 
 function errorMessage(error: unknown): string {
@@ -291,67 +331,73 @@ export async function POST(request: NextRequest) {
 
     const tokenCustom = parseCustomClaim(payload[CUSTOM_CLAIM]);
     const custom = { ...tokenCustom, ...xblockCustom };
-    const documentId = custom.document_id || null;
     const loIds = custom.lo_ids ? custom.lo_ids.split(",").filter(Boolean) : [];
     const chatbotEnabled = custom.chatbot_enabled !== "false";
 
     // ── Extract LTI claims ──
-    const lmsUserId = (payload.sub || "") as string;
+    const lmsSub = (payload.sub || "") as string;
     const email = (payload.email || null) as string | null;
     const displayName = (payload.name || null) as string | null;
     const roles = parseRoles(payload[ROLES_CLAIM]);
+    const mappedRole = mapRoles(roles);
 
     // Context (course) info — from id_token or from XBlock fallback
     const context = (payload[CONTEXT_CLAIM] || {}) as Record<string, unknown>;
-    const lmsCourseId = (context.id || xblockCourseId) as string;
+    const lmsContextId = (context.id || xblockCourseId) as string;
+    const contextTitle =
+      typeof context.title === "string"
+        ? context.title
+        : typeof context.label === "string"
+          ? context.label
+          : undefined;
 
-    // ── Determine role ──
-    const isInstructor = roles.some((r: string) =>
-      r.includes("Instructor") || r.includes("Administrator")
-    );
+    const resourceLink = (payload[RESOURCE_LINK_CLAIM] || {}) as Record<string, unknown>;
+    const resourceLinkId =
+      typeof resourceLink.id === "string" ? resourceLink.id : custom.resource_link_id;
+    const targetKind = parseTargetKind(custom.target_kind);
+    const targetId = custom.target_id || custom.lesson_id || null;
 
-    // ── Upsert LMS user mapping in Postgres ──
-    const client = await pool.connect();
-    let internalUserId: string;
-    try {
-      const result = await client.query(
-        `INSERT INTO lms_user_mappings (lms_type, lms_user_id, email, display_name)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (lms_type, lms_user_id)
-         DO UPDATE SET email = $3, display_name = $4, updated_at = now()
-         RETURNING internal_user_id`,
-        [LTI_CONFIG.lmsType, lmsUserId, email, displayName]
-      );
-      internalUserId = result.rows[0].internal_user_id as string;
-    } finally {
-      client.release();
-    }
+    const ags = (payload[AGS_CLAIM] || {}) as Record<string, unknown>;
+    const agsLineItemUrl = typeof ags.lineitem === "string" ? ags.lineitem : undefined;
 
-    // ── Upsert LMS course reference ──
-    if (lmsCourseId) {
-      const c2 = await pool.connect();
-      try {
-        await c2.query(
-          `INSERT INTO lms_course_ref (lms_type, lms_course_id)
-           VALUES ($1, $2)
-           ON CONFLICT (lms_type, lms_course_id) DO NOTHING`,
-          [LTI_CONFIG.lmsType, lmsCourseId]
-        );
-      } finally {
-        c2.release();
-      }
-    }
+    // ── Sync with core-api ──
+    const sync = await coreApi.launchSync<LaunchSyncResponse>({
+      lmsType: LTI_CONFIG.lmsType,
+      lmsSub,
+      email,
+      displayName,
+      role: mappedRole.role,
+      courseRole: mappedRole.courseRole,
+      lmsContextId,
+      contextTitle,
+      resourceLinkId,
+      targetKind,
+      targetId,
+      customClaims: custom,
+      agsLineItemUrl,
+      agsScoreMaximum:
+        typeof custom.ags_score_maximum === "string"
+          ? Number(custom.ags_score_maximum)
+          : undefined,
+      agsLabel: typeof resourceLink.title === "string" ? resourceLink.title : contextTitle,
+    });
 
     // ── Set Redis session ──
     const session: LtiSession = {
-      internalUserId,
+      internalUserId: sync.internalUserId,
       lmsType: LTI_CONFIG.lmsType,
-      lmsUserId,
+      lmsSub,
       email,
       displayName,
-      courseId: lmsCourseId,
+      courseId: sync.internalCourseId,
+      lmsContextId,
+      role: mappedRole.role,
+      courseRole: sync.courseRole || mappedRole.courseRole,
       roles,
-      documentId,
+      lmsCourseRefId: sync.lmsCourseRefId,
+      resourceLinkId: sync.resourceLinkId,
+      targetKind,
+      targetId,
       loIds,
       chatbotEnabled,
     };
@@ -366,7 +412,13 @@ export async function POST(request: NextRequest) {
     // ── Set session cookie ──
     const sameSite = ltiCookieSameSite();
     const secure = ltiCookieSecure(sameSite);
-    const redirectUrl = publicToolUrl(isInstructor ? "/manage/review" : "/learn/cards");
+    const redirectPath =
+      mappedRole.courseRole === "instructor" || mappedRole.courseRole === "ta"
+        ? "/manage/dashboard"
+        : targetKind === "lesson" && targetId
+          ? `/learn/lessons/${targetId}`
+          : `/learn/courses/${sync.internalCourseId}`;
+    const redirectUrl = publicToolUrl(redirectPath);
     if (shouldUseQuerySessionFallback(sameSite, secure)) {
       redirectUrl.searchParams.set("sid", sid);
     }
@@ -391,10 +443,11 @@ export async function POST(request: NextRequest) {
 
     return response;
   } catch (err: unknown) {
-    console.error("[lti/launch] error:", errorMessage(err));
+    console.error("[lti/launch] error:", err instanceof CoreApiError ? err.body : errorMessage(err));
+    const status = err instanceof CoreApiError && err.status >= 500 ? 502 : 500;
     return new Response(
       JSON.stringify({ error: "LTI launch failed", detail: errorMessage(err) }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
+      { status, headers: { "Content-Type": "application/json" } }
     );
   }
 }

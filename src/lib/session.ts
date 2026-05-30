@@ -4,12 +4,18 @@ import { redis } from "@/lib/redis";
 export interface LtiSession {
   internalUserId: string;
   lmsType: "openedx" | "moodle" | "canvas";
-  lmsUserId: string;
+  lmsSub: string;
   email: string | null;
   displayName: string | null;
   courseId: string;
+  lmsContextId: string;
+  role: "instructor" | "learner" | "administrator";
+  courseRole: "instructor" | "learner" | "ta" | "observer";
   roles: string[];
-  documentId: string | null;
+  lmsCourseRefId?: string;
+  resourceLinkId?: string;
+  targetKind?: "lesson" | "card" | "quiz_set" | "chat" | "video";
+  targetId?: string | null;
   loIds: string[];
   chatbotEnabled: boolean;
 }

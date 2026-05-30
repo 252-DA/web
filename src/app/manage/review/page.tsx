@@ -1,147 +1,147 @@
 import { readLtiSession } from "@/lib/session";
+import { coreApi, claimsFromSession } from "@/lib/core-api";
 
-// Updated for Next.js 16: params is a Promise
 interface Props {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
-interface DocumentSummary {
-  document_id: string;
-  document_name: string;
-  doc_type: string;
+type LessonRef = { lesson_id: string; title: string };
+type CardDraft = {
+  card_id: string;
+  title: string | null;
   status: string;
-  course_id: string | null;
-  created_at: string;
-  chunk_count: number;
+  content: unknown;
+  lessons?: LessonRef;
+};
+type QuizDraft = {
+  quiz_id: string;
+  question: string;
+  status: string;
+  type: string;
+  lessons?: LessonRef;
+};
+type Drafts = { cards: CardDraft[]; quizItems: QuizDraft[] };
+
+function withSid(path: string, sid?: string) {
+  if (!sid) return path;
+  const url = new URL(path, "http://local");
+  url.searchParams.set("sid", sid);
+  return `${url.pathname}?${url.searchParams.toString()}`;
+}
+
+function insight(content: unknown) {
+  if (!content || typeof content !== "object") return "";
+  const data = content as { key_insight?: unknown; keyInsight?: unknown };
+  return String(data.key_insight || data.keyInsight || "");
 }
 
 export default async function ReviewPage({ searchParams }: Props) {
-  // ── Read session ──
   const sp = await searchParams;
-  const activeSession = await readLtiSession(sp?.sid);
-  if (!activeSession) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50">
-        <div className="rounded-lg bg-white p-8 shadow-md text-center">
-          <h1 className="text-2xl font-bold text-red-600 mb-4">Phiên hết hạn</h1>
-          <p className="text-gray-600">Vui lòng mở lại từ LMS.</p>
-        </div>
-      </div>
-    );
+  const active = await readLtiSession(sp.sid);
+  if (!active) {
+    return <main className="p-8 text-slate-700">Phiên hết hạn. Vui lòng mở lại từ LMS.</main>;
   }
 
-  const { session } = activeSession;
-
-  // ── Role check: only instructors ──
-  const isInstructor = session.roles?.some(
-    (r: string) => r.includes("Instructor") || r.includes("Administrator")
-  );
-  if (!isInstructor) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50">
-        <div className="rounded-lg bg-white p-8 shadow-md text-center">
-          <h1 className="text-2xl font-bold text-red-600 mb-4">Không có quyền truy cập</h1>
-          <p className="text-gray-600">Chỉ giảng viên mới có thể xem trang này.</p>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Fetch documents from HTTP API ──
-  const courseId = (sp?.course_id as string) || session.courseId || "";
-
-  let docs: DocumentSummary[] = [];
-  let errorMsg = "";
-
+  const { sid, session } = active;
+  const claims = claimsFromSession(session);
+  let drafts: Drafts = { cards: [], quizItems: [] };
+  let error = "";
   try {
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://http-api:8000";
-    const params = new URLSearchParams();
-    if (courseId) params.set("course_id", courseId);
-    params.set("limit", "100");
-
-    const res = await fetch(`${backendUrl}/api/documents?${params.toString()}`, {
-      cache: "no-store",
-    });
-
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    docs = await res.json();
-  } catch (err: any) {
-    errorMsg = err.message || "Không thể tải danh sách tài liệu.";
+    drafts = await coreApi.listReviewDrafts<Drafts>({ courseId: session.courseId }, claims);
+  } catch (err) {
+    error = err instanceof Error ? err.message : "Không thể tải review inbox.";
   }
+
+  const lessonIds = Array.from(
+    new Set([
+      ...drafts.cards.map((card) => card.lessons?.lesson_id).filter(Boolean),
+      ...drafts.quizItems.map((quiz) => quiz.lessons?.lesson_id).filter(Boolean),
+    ]),
+  ) as string[];
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white shadow-sm border-b">
-        <div className="max-w-5xl mx-auto px-4 py-3">
-          <h1 className="text-lg font-bold text-gray-800">Quản lý tài liệu</h1>
-          <p className="text-sm text-gray-500">
-            Instructor: {session.displayName || session.email}
-            {courseId && <> • Course: {courseId}</>}
-          </p>
+    <main className="min-h-screen bg-slate-50 text-slate-950">
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
+          <div>
+            <p className="text-xs font-semibold uppercase text-slate-500">Instructor</p>
+            <h1 className="text-xl font-semibold">Review content</h1>
+          </div>
+          <nav className="flex gap-2 text-sm">
+            <a className="rounded border px-3 py-2" href={withSid("/manage/dashboard", sid)}>Dashboard</a>
+            <a className="rounded border px-3 py-2" href={withSid("/manage/documents", sid)}>Documents</a>
+          </nav>
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-8">
-        {errorMsg && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
-            <p className="text-red-700">{errorMsg}</p>
-          </div>
+      <section className="mx-auto max-w-6xl space-y-4 px-4 py-6">
+        {error && <p className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+        {lessonIds.map((lessonId) => {
+          const cards = drafts.cards.filter((card) => card.lessons?.lesson_id === lessonId);
+          const quizzes = drafts.quizItems.filter((quiz) => quiz.lessons?.lesson_id === lessonId);
+          const title = cards[0]?.lessons?.title || quizzes[0]?.lessons?.title || "Lesson";
+          return (
+            <section key={lessonId} className="overflow-hidden rounded border border-slate-200 bg-white">
+              <div className="flex items-center justify-between border-b border-slate-200 p-4">
+                <div>
+                  <h2 className="font-semibold">{title}</h2>
+                  <p className="text-sm text-slate-500">{cards.length} cards, {quizzes.length} quiz items</p>
+                </div>
+                <div className="flex gap-2">
+                  <a className="rounded border px-3 py-2 text-sm" href={withSid(`/manage/lessons/${lessonId}/edit`, sid)}>
+                    Edit
+                  </a>
+                  <form method="post" action={withSid(`/api/lessons/${lessonId}/publish`, sid)}>
+                    <button className="rounded bg-slate-900 px-3 py-2 text-sm font-medium text-white">Publish</button>
+                  </form>
+                </div>
+              </div>
+              <div className="divide-y divide-slate-200">
+                {cards.map((card) => (
+                  <div key={card.card_id} className="grid gap-3 p-4 md:grid-cols-[1fr_auto]">
+                    <div>
+                      <p className="text-xs font-semibold uppercase text-slate-500">Card · {card.status}</p>
+                      <h3 className="font-medium">{card.title || "Untitled card"}</h3>
+                      {insight(card.content) && <p className="mt-1 text-sm text-slate-600">{insight(card.content)}</p>}
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <form method="post" action={withSid(`/api/review/cards/${card.card_id}/approve`, sid)}>
+                        <button className="rounded bg-emerald-700 px-3 py-2 text-sm font-medium text-white">Approve</button>
+                      </form>
+                      <form method="post" action={withSid(`/api/review/cards/${card.card_id}/reject`, sid)}>
+                        <input type="hidden" name="reason" value="Needs changes" />
+                        <button className="rounded border px-3 py-2 text-sm">Reject</button>
+                      </form>
+                    </div>
+                  </div>
+                ))}
+                {quizzes.map((quiz) => (
+                  <div key={quiz.quiz_id} className="grid gap-3 p-4 md:grid-cols-[1fr_auto]">
+                    <div>
+                      <p className="text-xs font-semibold uppercase text-slate-500">Quiz · {quiz.type} · {quiz.status}</p>
+                      <h3 className="font-medium">{quiz.question}</h3>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <form method="post" action={withSid(`/api/review/quiz-items/${quiz.quiz_id}/approve`, sid)}>
+                        <button className="rounded bg-emerald-700 px-3 py-2 text-sm font-medium text-white">Approve</button>
+                      </form>
+                      <form method="post" action={withSid(`/api/review/quiz-items/${quiz.quiz_id}/reject`, sid)}>
+                        <input type="hidden" name="reason" value="Needs changes" />
+                        <button className="rounded border px-3 py-2 text-sm">Reject</button>
+                      </form>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          );
+        })}
+        {!error && lessonIds.length === 0 && (
+          <p className="rounded border border-slate-200 bg-white p-6 text-sm text-slate-500">
+            Không có draft nào đang chờ review.
+          </p>
         )}
-
-        <div className="bg-white rounded-xl shadow-md overflow-hidden">
-          <table className="w-full">
-            <thead className="bg-gray-50 border-b">
-              <tr>
-                <th className="text-left px-4 py-3 text-sm font-semibold text-gray-600">Tên tài liệu</th>
-                <th className="text-left px-4 py-3 text-sm font-semibold text-gray-600">Loại</th>
-                <th className="text-left px-4 py-3 text-sm font-semibold text-gray-600">Trạng thái</th>
-                <th className="text-left px-4 py-3 text-sm font-semibold text-gray-600">Course</th>
-                <th className="text-center px-4 py-3 text-sm font-semibold text-gray-600">Chunks</th>
-                <th className="text-right px-4 py-3 text-sm font-semibold text-gray-600">Ngày tạo</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {docs.length === 0 && !errorMsg && (
-                <tr>
-                  <td colSpan={6} className="text-center py-12 text-gray-500">
-                    Chưa có tài liệu nào. Upload qua Swagger tại /docs.
-                  </td>
-                </tr>
-              )}
-              {docs.map((doc) => (
-                <tr key={doc.document_id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 text-sm font-medium text-gray-900">
-                    {doc.document_name}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-500 uppercase">{doc.doc_type}</td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`inline-block px-2 py-1 text-xs font-medium rounded-full ${
-                        doc.status === "DONE" || doc.status === "ENRICHED"
-                          ? "bg-green-100 text-green-700"
-                          : doc.status === "ERROR"
-                          ? "bg-red-100 text-red-700"
-                          : "bg-yellow-100 text-yellow-700"
-                      }`}
-                    >
-                      {doc.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-500">
-                    {doc.course_id || "—"}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-500 text-center">
-                    {doc.chunk_count}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-500 text-right">
-                    {new Date(doc.created_at).toLocaleDateString("vi-VN")}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </main>
-    </div>
+      </section>
+    </main>
   );
 }
