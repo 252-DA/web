@@ -1,5 +1,6 @@
 import { readLtiSession } from "@/lib/session";
 import { coreApi, claimsFromSession } from "@/lib/core-api";
+import { InstructorNav } from "@/components/instructor-nav";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -42,6 +43,9 @@ export default async function CoursePage({ params, searchParams }: Props) {
           <p className="text-xs font-semibold uppercase text-slate-500">{course.code}</p>
           <h1 className="text-2xl font-semibold">{course.name}</h1>
           {course.description && <p className="mt-2 text-sm text-slate-600">{course.description}</p>}
+          {(session.courseRole === "instructor" || session.courseRole === "ta") && (
+            <InstructorNav active="learner" courseId={session.courseId} sid={sid} />
+          )}
         </div>
       </header>
       <section className="mx-auto max-w-5xl px-4 py-6">

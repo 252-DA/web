@@ -1,5 +1,6 @@
 import { readLtiSession } from "@/lib/session";
 import { coreApi, claimsFromSession } from "@/lib/core-api";
+import { InstructorNav } from "@/components/instructor-nav";
 import { UploadForm } from "./components/upload-form";
 
 interface Props {
@@ -48,15 +49,13 @@ export default async function DocumentsPage({ searchParams }: Props) {
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950">
       <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
+        <div className="mx-auto max-w-6xl px-4 py-5">
           <div>
             <p className="text-xs font-semibold uppercase text-slate-500">Instructor</p>
             <h1 className="text-xl font-semibold">Tài liệu khóa học</h1>
+            <p className="mt-1 text-sm text-slate-600">Upload tài liệu, theo dõi pipeline và trạng thái chunking.</p>
           </div>
-          <nav className="flex gap-2 text-sm">
-            <a className="rounded border px-3 py-2" href={withSid("/manage/dashboard", sid)}>Dashboard</a>
-            <a className="rounded border px-3 py-2" href={withSid("/manage/review", sid)}>Review</a>
-          </nav>
+          <InstructorNav active="documents" courseId={session.courseId} sid={sid} />
         </div>
       </header>
 

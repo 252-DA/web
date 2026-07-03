@@ -15,6 +15,7 @@ ENV NODE_ENV=development
 ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY web/ .
+COPY core-api/proto ./proto
 
 CMD ["pnpm", "dev", "--hostname", "0.0.0.0"]
 
@@ -22,6 +23,7 @@ CMD ["pnpm", "dev", "--hostname", "0.0.0.0"]
 FROM deps AS builder
 
 COPY web/ .
+COPY core-api/proto ./proto
 
 ENV NEXT_TELEMETRY_DISABLED=1
 

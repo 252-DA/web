@@ -1,5 +1,6 @@
 import { readLtiSession } from "@/lib/session";
 import { coreApi, claimsFromSession } from "@/lib/core-api";
+import { InstructorNav } from "@/components/instructor-nav";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -46,14 +47,17 @@ export default async function LessonEditPage({ params, searchParams }: Props) {
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950">
       <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-5">
-          <div>
-            <p className="text-xs font-semibold uppercase text-slate-500">Edit lesson</p>
-            <h1 className="text-2xl font-semibold">{lesson.title}</h1>
+        <div className="mx-auto max-w-5xl px-4 py-5">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase text-slate-500">Edit lesson</p>
+              <h1 className="text-2xl font-semibold">{lesson.title}</h1>
+            </div>
+            <form method="post" action={withSid(`/api/lessons/${id}/publish`, sid)}>
+              <button className="rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white">Publish approved</button>
+            </form>
           </div>
-          <form method="post" action={withSid(`/api/lessons/${id}/publish`, sid)}>
-            <button className="rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white">Publish approved</button>
-          </form>
+          <InstructorNav active="review" courseId={session.courseId} sid={sid} />
         </div>
       </header>
 

@@ -1,5 +1,6 @@
 import { readLtiSession } from "@/lib/session";
 import { coreApi, claimsFromSession } from "@/lib/core-api";
+import { InstructorNav } from "@/components/instructor-nav";
 
 interface Props {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
@@ -62,15 +63,13 @@ export default async function ReviewPage({ searchParams }: Props) {
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950">
       <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
+        <div className="mx-auto max-w-6xl px-4 py-5">
           <div>
             <p className="text-xs font-semibold uppercase text-slate-500">Instructor</p>
             <h1 className="text-xl font-semibold">Review content</h1>
+            <p className="mt-1 text-sm text-slate-600">Duyệt cards và quiz items trước khi publish sang learner view.</p>
           </div>
-          <nav className="flex gap-2 text-sm">
-            <a className="rounded border px-3 py-2" href={withSid("/manage/dashboard", sid)}>Dashboard</a>
-            <a className="rounded border px-3 py-2" href={withSid("/manage/documents", sid)}>Documents</a>
-          </nav>
+          <InstructorNav active="review" courseId={session.courseId} sid={sid} />
         </div>
       </header>
 
@@ -137,9 +136,17 @@ export default async function ReviewPage({ searchParams }: Props) {
           );
         })}
         {!error && lessonIds.length === 0 && (
-          <p className="rounded border border-slate-200 bg-white p-6 text-sm text-slate-500">
-            Không có draft nào đang chờ review.
-          </p>
+          <div className="rounded border border-slate-200 bg-white p-6">
+            <p className="text-sm text-slate-500">
+              Không có draft nào đang chờ review. Upload tài liệu trước để pipeline sinh lesson draft.
+            </p>
+            <a
+              className="mt-4 inline-flex rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white"
+              href={withSid("/manage/documents", sid)}
+            >
+              Đi tới Documents
+            </a>
+          </div>
         )}
       </section>
     </main>

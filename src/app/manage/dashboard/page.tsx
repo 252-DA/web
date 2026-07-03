@@ -1,5 +1,6 @@
 import { readLtiSession } from "@/lib/session";
 import { coreApi, claimsFromSession } from "@/lib/core-api";
+import { InstructorNav } from "@/components/instructor-nav";
 
 interface Props {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
@@ -35,21 +36,27 @@ export default async function ManageDashboard({ searchParams }: Props) {
         <div className="mx-auto max-w-6xl px-4 py-5">
           <p className="text-xs font-semibold uppercase text-slate-500">Instructor workspace</p>
           <h1 className="text-2xl font-semibold">Quản lý khóa học</h1>
-          <p className="mt-1 text-sm text-slate-600">{session.displayName || session.lmsSub}</p>
+          <p className="mt-1 text-sm text-slate-600">
+            {session.displayName || session.lmsSub} · {session.courseId}
+          </p>
+          <InstructorNav active="dashboard" courseId={session.courseId} sid={sid} />
         </div>
       </header>
       <section className="mx-auto grid max-w-6xl gap-4 px-4 py-6 md:grid-cols-3">
-        <a className="rounded border border-slate-200 bg-white p-4" href={withSid("/manage/documents", sid)}>
+        <a className="rounded border border-slate-200 bg-white p-4 hover:border-slate-400" href={withSid("/manage/documents", sid)}>
           <p className="text-sm text-slate-500">Pipeline</p>
           <p className="mt-2 text-2xl font-semibold">Tài liệu</p>
+          <p className="mt-2 text-sm text-slate-600">Upload tài liệu và chạy xử lý nội dung.</p>
         </a>
-        <a className="rounded border border-slate-200 bg-white p-4" href={withSid("/manage/review", sid)}>
+        <a className="rounded border border-slate-200 bg-white p-4 hover:border-slate-400" href={withSid("/manage/review", sid)}>
           <p className="text-sm text-slate-500">Draft cần duyệt</p>
           <p className="mt-2 text-2xl font-semibold">{drafts.cards.length + drafts.quizItems.length}</p>
+          <p className="mt-2 text-sm text-slate-600">Duyệt cards và quiz trước khi publish.</p>
         </a>
-        <a className="rounded border border-slate-200 bg-white p-4" href={withSid(`/learn/courses/${session.courseId}`, sid)}>
+        <a className="rounded border border-slate-200 bg-white p-4 hover:border-slate-400" href={withSid(`/learn/courses/${session.courseId}`, sid)}>
           <p className="text-sm text-slate-500">Learner preview</p>
           <p className="mt-2 text-2xl font-semibold">Xem khóa học</p>
+          <p className="mt-2 text-sm text-slate-600">Mở view học viên cho các lesson đã publish.</p>
         </a>
       </section>
       <section className="mx-auto max-w-6xl px-4 pb-8">
@@ -69,7 +76,19 @@ export default async function ManageDashboard({ searchParams }: Props) {
                 <span className="text-slate-500">{lesson.published_at ? "Published" : "Draft"}</span>
               </a>
             ))}
-            {lessons.length === 0 && <p className="p-6 text-sm text-slate-500">Chưa có lesson.</p>}
+            {lessons.length === 0 && (
+              <div className="p-6">
+                <p className="text-sm text-slate-500">
+                  Chưa có lesson. Bắt đầu bằng cách upload tài liệu, sau đó review draft được sinh ra.
+                </p>
+                <a
+                  className="mt-4 inline-flex rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white"
+                  href={withSid("/manage/documents", sid)}
+                >
+                  Upload tài liệu
+                </a>
+              </div>
+            )}
           </div>
         </div>
       </section>
