@@ -3,34 +3,14 @@ import * as protoLoader from "@grpc/proto-loader";
 import { resolve } from "node:path";
 import { mintCoreJwt, type BffClaims } from "./bff-jwt";
 import type { LtiSession } from "./session";
-
-type CoreMethod =
-  | "LaunchSync"
-  | "ListCourses"
-  | "GetCourse"
-  | "ListChapters"
-  | "ListLearningOutcomes"
-  | "CreateUploadSession"
-  | "ConfirmUpload"
-  | "ListDocuments"
-  | "DeleteDocument"
-  | "ListLessons"
-  | "GetLesson"
-  | "GetLessonCards"
-  | "GetLessonQuiz"
-  | "PublishLesson"
-  | "ListReviewDrafts"
-  | "ApproveCard"
-  | "RejectCard"
-  | "UpdateCard"
-  | "ApproveQuizItem"
-  | "RejectQuizItem"
-  | "UpdateQuizItem"
-  | "SubmitQuiz"
-  | "ListQuizAttempts"
-  | "CreateContentGenerationRequest";
-
-type JsonResponse = { json?: string };
+import type {
+  CoreRpcMethod,
+  CoreRpcRequest,
+  CoreRpcResponse,
+  JsonRequestEnvelope,
+  JsonResponseEnvelope,
+  JsonValue,
+} from "./core-api-contract";
 
 export class CoreApiError extends Error {
   status: number;
@@ -55,7 +35,33 @@ export function claimsFromSession(session: LtiSession): BffClaims {
 const PROTO_PATH = resolve(process.cwd(), "proto/core_api.proto");
 const GRPC_HOST = process.env.CORE_API_GRPC_HOST || "core-api:50051";
 
-type GrpcClient = Record<string, Function>;
+type UnaryClientMethod = (
+  request: JsonRequestEnvelope | Record<string, never>,
+  metadata: grpc.Metadata,
+  callback: grpc.requestCallback<JsonResponseEnvelope>,
+) => grpc.ClientUnaryCall;
+
+type GrpcClient = grpc.Client & {
+  [TMethod in CoreRpcMethod]: UnaryClientMethod;
+};
+
+interface CoreServiceClientConstructor {
+  new (
+    address: string,
+    credentials: grpc.ChannelCredentials,
+    options?: Partial<grpc.ChannelOptions>,
+  ): GrpcClient;
+  service: grpc.ServiceDefinition;
+  serviceName: string;
+}
+
+interface LoadedCorePackage {
+  ai_lms?: {
+    v1?: {
+      CoreApiService?: CoreServiceClientConstructor;
+    };
+  };
+}
 
 let client: GrpcClient | null = null;
 
@@ -71,115 +77,125 @@ function getClient(): GrpcClient {
     defaults: true,
     oneofs: true,
   });
-  const loaded = grpc.loadPackageDefinition(packageDefinition) as any;
+  const loaded = grpc.loadPackageDefinition(
+    packageDefinition,
+  ) as unknown as LoadedCorePackage;
   const Service = loaded.ai_lms?.v1?.CoreApiService;
   if (!Service) {
     throw new Error("CoreApiService not found in proto definition");
   }
 
-  client = new Service(GRPC_HOST, grpc.credentials.createInsecure()) as GrpcClient;
+  client = new Service(
+    GRPC_HOST,
+    grpc.credentials.createInsecure(),
+  ) as GrpcClient;
   return client;
 }
 
-async function callCore<TResponse>(
-  method: CoreMethod,
-  body: unknown,
+async function callCore<TMethod extends CoreRpcMethod>(
+  method: TMethod,
+  body: CoreRpcRequest<TMethod>,
   claims: BffClaims,
-): Promise<TResponse> {
+): Promise<CoreRpcResponse<TMethod>> {
   const token = await mintCoreJwt(claims);
   const metadata = new grpc.Metadata();
   metadata.set("authorization", `Bearer ${token}`);
 
   const request =
-    method === "ListCourses"
-      ? {}
-      : { json: JSON.stringify(body ?? {}) };
+    method === "ListCourses" ? {} : { json: JSON.stringify(body ?? {}) };
 
   return new Promise((resolvePromise, reject) => {
     const grpcClient = getClient();
     grpcClient[method](
       request,
       metadata,
-      (error: grpc.ServiceError | null, response: JsonResponse) => {
+      (
+        error: grpc.ServiceError | null,
+        response: JsonResponseEnvelope | undefined,
+      ) => {
         if (error) {
-          reject(new CoreApiError(error.code || 500, error.details || error.message));
+          reject(
+            new CoreApiError(error.code || 500, error.details || error.message),
+          );
           return;
         }
 
         if (!response?.json) {
-          resolvePromise(null as TResponse);
+          reject(
+            new CoreApiError(
+              grpc.status.INTERNAL,
+              "Missing gRPC JSON response",
+            ),
+          );
           return;
         }
 
-        resolvePromise(JSON.parse(response.json) as TResponse);
+        const parsed: unknown = JSON.parse(response.json);
+        resolvePromise(parsed as CoreRpcResponse<TMethod>);
       },
     );
   });
 }
 
 export const coreApi = {
-  launchSync: <TResponse = unknown>(body: unknown) =>
-    callCore<TResponse>("LaunchSync", body, {
+  launchSync: (body: CoreRpcRequest<"LaunchSync">) =>
+    callCore("LaunchSync", body, {
       sub: "lti-bootstrap",
       roles: ["system"],
       scope: "admin",
     }),
-  listCourses: <TResponse = unknown>(claims: BffClaims) =>
-    callCore<TResponse>("ListCourses", {}, claims),
-  getCourse: <TResponse = unknown>(courseId: string, claims: BffClaims) =>
-    callCore<TResponse>("GetCourse", { courseId }, claims),
-  listChapters: <TResponse = unknown>(courseId: string, claims: BffClaims) =>
-    callCore<TResponse>("ListChapters", { courseId }, claims),
-  listLearningOutcomes: <TResponse = unknown>(courseId: string, claims: BffClaims) =>
-    callCore<TResponse>("ListLearningOutcomes", { courseId }, claims),
-  createUploadSession: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
-    callCore<TResponse>("CreateUploadSession", body, claims),
-  confirmUpload: <TResponse = unknown>(documentId: string, claims: BffClaims) =>
-    callCore<TResponse>("ConfirmUpload", { documentId }, claims),
-  listDocuments: <TResponse = unknown>(
-    body: { courseId: string; limit?: number; offset?: number },
+  listCourses: (claims: BffClaims) => callCore("ListCourses", {}, claims),
+  getCourse: (courseId: string, claims: BffClaims) =>
+    callCore("GetCourse", { courseId }, claims),
+  listChapters: (courseId: string, claims: BffClaims) =>
+    callCore("ListChapters", { courseId }, claims),
+  listLearningOutcomes: (courseId: string, claims: BffClaims) =>
+    callCore("ListLearningOutcomes", { courseId }, claims),
+  createUploadSession: (
+    body: CoreRpcRequest<"CreateUploadSession">,
     claims: BffClaims,
-  ) => callCore<TResponse>("ListDocuments", body, claims),
-  deleteDocument: <TResponse = unknown>(documentId: string, claims: BffClaims) =>
-    callCore<TResponse>("DeleteDocument", { documentId }, claims),
-  listLessons: <TResponse = unknown>(
-    body: { courseId: string; status?: string },
+  ) => callCore("CreateUploadSession", body, claims),
+  confirmUpload: (documentId: string, claims: BffClaims) =>
+    callCore("ConfirmUpload", { documentId }, claims),
+  listDocuments: (body: CoreRpcRequest<"ListDocuments">, claims: BffClaims) =>
+    callCore("ListDocuments", body, claims),
+  deleteDocument: (documentId: string, claims: BffClaims) =>
+    callCore("DeleteDocument", { documentId }, claims),
+  listLessons: (body: CoreRpcRequest<"ListLessons">, claims: BffClaims) =>
+    callCore("ListLessons", body, claims),
+  getLesson: (lessonId: string, claims: BffClaims) =>
+    callCore("GetLesson", { lessonId }, claims),
+  lessonCards: (lessonId: string, claims: BffClaims, status = "PUBLISHED") =>
+    callCore("GetLessonCards", { lessonId, status }, claims),
+  lessonQuiz: (lessonId: string, claims: BffClaims, status = "PUBLISHED") =>
+    callCore("GetLessonQuiz", { lessonId, status }, claims),
+  publishLesson: (lessonId: string, claims: BffClaims) =>
+    callCore("PublishLesson", { lessonId }, claims),
+  listReviewDrafts: (
+    body: CoreRpcRequest<"ListReviewDrafts">,
     claims: BffClaims,
-  ) => callCore<TResponse>("ListLessons", body, claims),
-  getLesson: <TResponse = unknown>(lessonId: string, claims: BffClaims) =>
-    callCore<TResponse>("GetLesson", { lessonId }, claims),
-  lessonCards: <TResponse = unknown>(
-    lessonId: string,
+  ) => callCore("ListReviewDrafts", body, claims),
+  approveCard: (cardId: string, claims: BffClaims) =>
+    callCore("ApproveCard", { cardId }, claims),
+  rejectCard: (cardId: string, reason: string, claims: BffClaims) =>
+    callCore("RejectCard", { cardId, reason }, claims),
+  updateCard: (cardId: string, content: JsonValue, claims: BffClaims) =>
+    callCore("UpdateCard", { cardId, content }, claims),
+  approveQuizItem: (quizId: string, claims: BffClaims) =>
+    callCore("ApproveQuizItem", { quizId }, claims),
+  rejectQuizItem: (quizId: string, reason: string, claims: BffClaims) =>
+    callCore("RejectQuizItem", { quizId, reason }, claims),
+  updateQuizItem: (
+    quizId: string,
+    data: CoreRpcRequest<"UpdateQuizItem">["data"],
     claims: BffClaims,
-    status = "PUBLISHED",
-  ) => callCore<TResponse>("GetLessonCards", { lessonId, status }, claims),
-  lessonQuiz: <TResponse = unknown>(
-    lessonId: string,
+  ) => callCore("UpdateQuizItem", { quizId, data }, claims),
+  submitQuiz: (body: CoreRpcRequest<"SubmitQuiz">, claims: BffClaims) =>
+    callCore("SubmitQuiz", body, claims),
+  listQuizAttempts: (lessonId: string, claims: BffClaims) =>
+    callCore("ListQuizAttempts", { lessonId }, claims),
+  createContentGenerationRequest: (
+    body: CoreRpcRequest<"CreateContentGenerationRequest">,
     claims: BffClaims,
-    status = "PUBLISHED",
-  ) => callCore<TResponse>("GetLessonQuiz", { lessonId, status }, claims),
-  publishLesson: <TResponse = unknown>(lessonId: string, claims: BffClaims) =>
-    callCore<TResponse>("PublishLesson", { lessonId }, claims),
-  listReviewDrafts: <TResponse = unknown>(
-    body: { courseId: string; kind?: "card" | "quiz" },
-    claims: BffClaims,
-  ) => callCore<TResponse>("ListReviewDrafts", body, claims),
-  approveCard: <TResponse = unknown>(cardId: string, claims: BffClaims) =>
-    callCore<TResponse>("ApproveCard", { cardId }, claims),
-  rejectCard: <TResponse = unknown>(cardId: string, reason: string, claims: BffClaims) =>
-    callCore<TResponse>("RejectCard", { cardId, reason }, claims),
-  updateCard: <TResponse = unknown>(cardId: string, content: unknown, claims: BffClaims) =>
-    callCore<TResponse>("UpdateCard", { cardId, content }, claims),
-  approveQuizItem: <TResponse = unknown>(quizId: string, claims: BffClaims) =>
-    callCore<TResponse>("ApproveQuizItem", { quizId }, claims),
-  rejectQuizItem: <TResponse = unknown>(quizId: string, reason: string, claims: BffClaims) =>
-    callCore<TResponse>("RejectQuizItem", { quizId, reason }, claims),
-  updateQuizItem: <TResponse = unknown>(quizId: string, data: unknown, claims: BffClaims) =>
-    callCore<TResponse>("UpdateQuizItem", { quizId, data }, claims),
-  submitQuiz: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
-    callCore<TResponse>("SubmitQuiz", body, claims),
-  listQuizAttempts: <TResponse = unknown>(lessonId: string, claims: BffClaims) =>
-    callCore<TResponse>("ListQuizAttempts", { lessonId }, claims),
-  createContentGenerationRequest: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
-    callCore<TResponse>("CreateContentGenerationRequest", body, claims),
+  ) => callCore("CreateContentGenerationRequest", body, claims),
 };

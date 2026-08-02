@@ -6,9 +6,6 @@ interface Props {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
-type Lesson = { lesson_id: string; title: string; status: string; published_at: string | null };
-type Drafts = { cards: unknown[]; quizItems: unknown[] };
-
 function withSid(path: string, sid?: string) {
   if (!sid) return path;
   const url = new URL(path, "http://local");
@@ -26,8 +23,8 @@ export default async function ManageDashboard({ searchParams }: Props) {
   const { sid, session } = active;
   const claims = claimsFromSession(session);
   const [lessons, drafts] = await Promise.all([
-    coreApi.listLessons<Lesson[]>({ courseId: session.courseId }, claims).catch(() => []),
-    coreApi.listReviewDrafts<Drafts>({ courseId: session.courseId }, claims).catch(() => ({ cards: [], quizItems: [] })),
+    coreApi.listLessons({ courseId: session.courseId }, claims).catch(() => []),
+    coreApi.listReviewDrafts({ courseId: session.courseId }, claims).catch(() => ({ cards: [], quizItems: [] })),
   ]);
 
   return (

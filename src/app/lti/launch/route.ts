@@ -29,13 +29,6 @@ type Jwk = {
 type Jwks = {
   keys?: Jwk[];
 };
-type LaunchSyncResponse = {
-  internalUserId: string;
-  internalCourseId: string;
-  lmsCourseRefId?: string;
-  courseRole: "instructor" | "learner" | "ta" | "observer";
-  resourceLinkId?: string;
-};
 type PlatformRole = "instructor" | "learner" | "administrator";
 type CourseRole = "instructor" | "learner" | "ta" | "observer";
 
@@ -355,17 +348,17 @@ export async function POST(request: NextRequest) {
     const resourceLinkId =
       typeof resourceLink.id === "string" ? resourceLink.id : custom.resource_link_id;
     const targetKind = parseTargetKind(custom.target_kind);
-    const targetId = custom.target_id || custom.lesson_id || null;
+    const targetId = custom.target_id || custom.lesson_id || undefined;
 
     const ags = (payload[AGS_CLAIM] || {}) as Record<string, unknown>;
     const agsLineItemUrl = typeof ags.lineitem === "string" ? ags.lineitem : undefined;
 
     // ── Sync with core-api ──
-    const sync = await coreApi.launchSync<LaunchSyncResponse>({
+    const sync = await coreApi.launchSync({
       lmsType: LTI_CONFIG.lmsType,
       lmsSub,
-      email,
-      displayName,
+      email: email ?? undefined,
+      displayName: displayName ?? undefined,
       role: mappedRole.role,
       courseRole: mappedRole.courseRole,
       lmsContextId,

@@ -7,15 +7,6 @@ interface Props {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
-type Lesson = { lesson_id: string; title: string };
-type QuizItem = {
-  quiz_id: string;
-  question: string;
-  type: string;
-  options: unknown;
-  explanation: string | null;
-};
-
 function withSid(path: string, sid?: string) {
   if (!sid) return path;
   const url = new URL(path, "http://local");
@@ -33,8 +24,8 @@ export default async function LessonQuizPage({ params, searchParams }: Props) {
   const { sid, session } = active;
   const claims = claimsFromSession(session);
   const [lesson, quizItems] = await Promise.all([
-    coreApi.getLesson<Lesson>(id, claims),
-    coreApi.lessonQuiz<QuizItem[]>(id, claims, "PUBLISHED"),
+    coreApi.getLesson(id, claims),
+    coreApi.lessonQuiz(id, claims, "PUBLISHED"),
   ]);
 
   return (

@@ -7,17 +7,6 @@ interface Props {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
-type Lesson = { lesson_id: string; title: string; status: string };
-type Card = { card_id: string; title: string | null; status: string; content: unknown };
-type Quiz = {
-  quiz_id: string;
-  question: string;
-  status: string;
-  options: unknown;
-  correct_answer: unknown;
-  explanation: string | null;
-};
-
 function withSid(path: string, sid?: string) {
   if (!sid) return path;
   const url = new URL(path, "http://local");
@@ -39,9 +28,9 @@ export default async function LessonEditPage({ params, searchParams }: Props) {
   const { sid, session } = active;
   const claims = claimsFromSession(session);
   const [lesson, cards, quizzes] = await Promise.all([
-    coreApi.getLesson<Lesson>(id, claims),
-    coreApi.lessonCards<Card[]>(id, claims, ""),
-    coreApi.lessonQuiz<Quiz[]>(id, claims, ""),
+    coreApi.getLesson(id, claims),
+    coreApi.lessonCards(id, claims, ""),
+    coreApi.lessonQuiz(id, claims, ""),
   ]);
 
   return (

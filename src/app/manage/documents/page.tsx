@@ -1,5 +1,6 @@
 import { readLtiSession } from "@/lib/session";
 import { coreApi, claimsFromSession } from "@/lib/core-api";
+import type { DocumentSummary } from "@/lib/core-api-contract";
 import { InstructorNav } from "@/components/instructor-nav";
 import { UploadForm } from "./components/upload-form";
 
@@ -7,24 +8,8 @@ interface Props {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
-type DocumentSummary = {
-  document_id: string;
-  title: string;
-  mime_type: string | null;
-  status: string;
-  created_at: string;
-  chunks_count: number;
-};
-
 function first(value?: string | string[]) {
   return Array.isArray(value) ? value[0] : value;
-}
-
-function withSid(path: string, sid?: string) {
-  if (!sid) return path;
-  const url = new URL(path, "http://local");
-  url.searchParams.set("sid", sid);
-  return `${url.pathname}?${url.searchParams.toString()}`;
 }
 
 export default async function DocumentsPage({ searchParams }: Props) {
@@ -41,7 +26,7 @@ export default async function DocumentsPage({ searchParams }: Props) {
   let documents: DocumentSummary[] = [];
   let error = "";
   try {
-    documents = await coreApi.listDocuments<DocumentSummary[]>({ courseId, limit: 100 }, claims);
+    documents = await coreApi.listDocuments({ courseId, limit: 100 }, claims);
   } catch (err) {
     error = err instanceof Error ? err.message : "Không thể tải danh sách tài liệu.";
   }
@@ -83,7 +68,9 @@ export default async function DocumentsPage({ searchParams }: Props) {
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">{doc.chunks_count}</td>
                   <td className="px-4 py-3 text-right text-slate-600">
-                    {new Date(doc.created_at).toLocaleDateString("vi-VN")}
+                    {doc.created_at
+                      ? new Date(doc.created_at).toLocaleDateString("vi-VN")
+                      : "—"}
                   </td>
                 </tr>
               ))}

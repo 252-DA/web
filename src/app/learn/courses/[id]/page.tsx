@@ -7,14 +7,6 @@ interface Props {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
-type Course = { course_id: string; code: string; name: string; description: string | null };
-type Lesson = {
-  lesson_id: string;
-  title: string;
-  status: string;
-  learning_outcomes?: { code: string | null; statement: string };
-};
-
 function withSid(path: string, sid?: string) {
   if (!sid) return path;
   const url = new URL(path, "http://local");
@@ -32,8 +24,8 @@ export default async function CoursePage({ params, searchParams }: Props) {
   const { sid, session } = active;
   const claims = claimsFromSession(session);
   const [course, lessons] = await Promise.all([
-    coreApi.getCourse<Course>(id, claims),
-    coreApi.listLessons<Lesson[]>({ courseId: id, status: "PUBLISHED" }, claims),
+    coreApi.getCourse(id, claims),
+    coreApi.listLessons({ courseId: id, status: "PUBLISHED" }, claims),
   ]);
 
   return (
@@ -66,7 +58,7 @@ export default async function CoursePage({ params, searchParams }: Props) {
                   {lesson.learning_outcomes && (
                     <span className="mt-1 block text-sm text-slate-600">
                       {lesson.learning_outcomes.code ? `${lesson.learning_outcomes.code}: ` : ""}
-                      {lesson.learning_outcomes.statement}
+                      {lesson.learning_outcomes.statement_vi}
                     </span>
                   )}
                 </span>

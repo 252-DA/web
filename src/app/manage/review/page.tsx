@@ -1,27 +1,11 @@
 import { readLtiSession } from "@/lib/session";
 import { coreApi, claimsFromSession } from "@/lib/core-api";
+import type { ReviewDraftsResponse } from "@/lib/core-api-contract";
 import { InstructorNav } from "@/components/instructor-nav";
 
 interface Props {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
-
-type LessonRef = { lesson_id: string; title: string };
-type CardDraft = {
-  card_id: string;
-  title: string | null;
-  status: string;
-  content: unknown;
-  lessons?: LessonRef;
-};
-type QuizDraft = {
-  quiz_id: string;
-  question: string;
-  status: string;
-  type: string;
-  lessons?: LessonRef;
-};
-type Drafts = { cards: CardDraft[]; quizItems: QuizDraft[] };
 
 function withSid(path: string, sid?: string) {
   if (!sid) return path;
@@ -45,10 +29,10 @@ export default async function ReviewPage({ searchParams }: Props) {
 
   const { sid, session } = active;
   const claims = claimsFromSession(session);
-  let drafts: Drafts = { cards: [], quizItems: [] };
+  let drafts: ReviewDraftsResponse = { cards: [], quizItems: [] };
   let error = "";
   try {
-    drafts = await coreApi.listReviewDrafts<Drafts>({ courseId: session.courseId }, claims);
+    drafts = await coreApi.listReviewDrafts({ courseId: session.courseId }, claims);
   } catch (err) {
     error = err instanceof Error ? err.message : "Không thể tải review inbox.";
   }
