@@ -13,7 +13,6 @@ type QuizItem = {
   question: string;
   type: string;
   options: unknown;
-  explanation: string | null;
 };
 
 function withSid(path: string, sid?: string) {
@@ -32,17 +31,33 @@ export default async function LessonQuizPage({ params, searchParams }: Props) {
 
   const { sid, session } = active;
   const claims = claimsFromSession(session);
-  const [lesson, quizItems] = await Promise.all([
+  const [lesson, rawQuizItems] = await Promise.all([
     coreApi.getLesson<Lesson>(id, claims),
     coreApi.lessonQuiz<QuizItem[]>(id, claims, "PUBLISHED"),
   ]);
+  // Project the server response before crossing the Client Component boundary.
+  // Core returns full Prisma rows, including correct_answer and explanation;
+  // neither may be serialized to the learner before submission.
+  const quizItems: QuizItem[] = rawQuizItems.map((item) => ({
+    quiz_id: item.quiz_id,
+    question: item.question,
+    type: item.type,
+    options: item.options,
+  }));
+  const previewOnly =
+    session.courseRole === "instructor" ||
+    session.courseRole === "ta" ||
+    session.role === "instructor" ||
+    session.role === "administrator";
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950">
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-5">
           <div>
-            <p className="text-xs font-semibold uppercase text-slate-500">Quiz</p>
+            <p className="text-xs font-semibold uppercase text-slate-500">
+              {previewOnly ? "Quiz preview" : "Quiz"}
+            </p>
             <h1 className="text-2xl font-semibold">{lesson.title}</h1>
           </div>
           <a className="rounded border px-3 py-2 text-sm" href={withSid(`/learn/lessons/${id}`, sid)}>
@@ -57,6 +72,7 @@ export default async function LessonQuizPage({ params, searchParams }: Props) {
             quizItems={quizItems}
             resourceLinkId={session.resourceLinkId}
             sid={sid}
+            previewOnly={previewOnly}
           />
         ) : (
           <p className="rounded border border-slate-200 bg-white p-6 text-sm text-slate-500">

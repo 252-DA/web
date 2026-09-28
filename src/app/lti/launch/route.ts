@@ -11,6 +11,7 @@ import { redis } from "@/lib/redis";
 import { LTI_CONFIG } from "@/lib/lti";
 import { LtiSession, SESSION_TTL, sessionKey } from "@/lib/session";
 import { coreApi, CoreApiError } from "@/lib/core-api";
+import { deepLinkSettings, deepLinkKey, LTI_CLAIM, type DeepLinkState } from "@/lib/lti-deep-link";
 
 const CUSTOM_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/custom";
 const CONTEXT_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/context";
@@ -330,7 +331,8 @@ export async function POST(request: NextRequest) {
     }
 
     const tokenCustom = parseCustomClaim(payload[CUSTOM_CLAIM]);
-    const custom = { ...tokenCustom, ...xblockCustom };
+    // Canvas resource targets must come from signed claims, never login query params.
+    const custom = LTI_CONFIG.lmsType === "canvas" ? tokenCustom : { ...xblockCustom, ...tokenCustom };
     const loIds = custom.lo_ids ? custom.lo_ids.split(",").filter(Boolean) : [];
     const chatbotEnabled = custom.chatbot_enabled !== "false";
 
@@ -340,6 +342,12 @@ export async function POST(request: NextRequest) {
     const displayName = (payload.name || null) as string | null;
     const roles = parseRoles(payload[ROLES_CLAIM]);
     const mappedRole = mapRoles(roles);
+    const messageType = payload[`${LTI_CLAIM}message_type`];
+    if (messageType !== "LtiResourceLinkRequest" && messageType !== "LtiDeepLinkingRequest") throw new Error("Unsupported LTI message type");
+    if (payload[`${LTI_CLAIM}version`] !== "1.3.0") throw new Error("Unsupported LTI version");
+    const isDeepLink = messageType === "LtiDeepLinkingRequest";
+    if (isDeepLink && !["instructor", "ta"].includes(mappedRole.courseRole)) throw new CoreApiError(403, "Chỉ giảng viên được thêm quiz vào Canvas.");
+    const linking = isDeepLink ? deepLinkSettings(payload, LTI_CONFIG.platformUrl) : null;
 
     // Context (course) info — from id_token or from XBlock fallback
     const context = (payload[CONTEXT_CLAIM] || {}) as Record<string, unknown>;
@@ -354,8 +362,8 @@ export async function POST(request: NextRequest) {
     const resourceLink = (payload[RESOURCE_LINK_CLAIM] || {}) as Record<string, unknown>;
     const resourceLinkId =
       typeof resourceLink.id === "string" ? resourceLink.id : custom.resource_link_id;
-    const targetKind = parseTargetKind(custom.target_kind);
-    const targetId = custom.target_id || custom.lesson_id || null;
+    const targetKind = isDeepLink ? undefined : parseTargetKind(custom.target_kind);
+    const targetId = isDeepLink ? null : custom.target_id || custom.lesson_id || null;
 
     const ags = (payload[AGS_CLAIM] || {}) as Record<string, unknown>;
     const agsLineItemUrl = typeof ags.lineitem === "string" ? ags.lineitem : undefined;
@@ -403,6 +411,11 @@ export async function POST(request: NextRequest) {
     };
 
     const sid = randomUUID();
+    const flowId = linking ? randomUUID() : undefined;
+    if (linking && flowId) {
+      const flow: DeepLinkState = { ...linking, userId: session.internalUserId, courseId: session.courseId, selectionId: randomUUID() };
+      await redis.setex(deepLinkKey(flowId), SESSION_TTL, JSON.stringify(flow));
+    }
     await redis.setex(
       sessionKey(sid),
       SESSION_TTL,
@@ -413,12 +426,17 @@ export async function POST(request: NextRequest) {
     const sameSite = ltiCookieSameSite();
     const secure = ltiCookieSecure(sameSite);
     const redirectPath =
-      mappedRole.courseRole === "instructor" || mappedRole.courseRole === "ta"
+      isDeepLink
+        ? "/lti/deep-link"
+        : targetKind === "quiz_set" && targetId
+          ? `/learn/quizzes/${targetId}`
+          : mappedRole.courseRole === "instructor" || mappedRole.courseRole === "ta"
         ? "/manage/dashboard"
         : targetKind === "lesson" && targetId
           ? `/learn/lessons/${targetId}`
           : `/learn/courses/${sync.internalCourseId}`;
     const redirectUrl = publicToolUrl(redirectPath);
+    if (flowId) redirectUrl.searchParams.set("flow", flowId);
     if (shouldUseQuerySessionFallback(sameSite, secure)) {
       redirectUrl.searchParams.set("sid", sid);
     }
@@ -444,7 +462,7 @@ export async function POST(request: NextRequest) {
     return response;
   } catch (err: unknown) {
     console.error("[lti/launch] error:", err instanceof CoreApiError ? err.body : errorMessage(err));
-    const status = err instanceof CoreApiError && err.status >= 500 ? 502 : 500;
+    const status = err instanceof CoreApiError ? (err.status === 403 || err.status === 7 ? 403 : err.status >= 500 ? 502 : 400) : 400;
     return new Response(
       JSON.stringify({ error: "LTI launch failed", detail: errorMessage(err) }),
       { status, headers: { "Content-Type": "application/json" } }

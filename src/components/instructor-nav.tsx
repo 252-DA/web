@@ -1,4 +1,4 @@
-type InstructorNavItem = "dashboard" | "documents" | "review" | "learner";
+type InstructorNavItem = "dashboard" | "curriculum" | "documents" | "quizzes" | "review" | "learner";
 
 type Props = {
   active: InstructorNavItem;
@@ -16,8 +16,10 @@ function withSid(path: string, sid?: string) {
 export function InstructorNav({ active, courseId, sid }: Props) {
   const items = [
     { key: "dashboard", label: "Dashboard", href: "/manage/dashboard" },
+    { key: "curriculum", label: "Đề cương", href: "/manage/curriculum" },
     { key: "documents", label: "Documents", href: "/manage/documents" },
-    { key: "review", label: "Review drafts", href: "/manage/review" },
+    { key: "quizzes", label: "Soạn đề", href: "/manage/quizzes/new" },
+    { key: "review", label: "Quiz & Review", href: "/manage/review" },
     { key: "learner", label: "Learner preview", href: `/learn/courses/${courseId}` },
   ] as const;
 

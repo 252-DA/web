@@ -10,10 +10,15 @@ type CoreMethod =
   | "GetCourse"
   | "ListChapters"
   | "ListLearningOutcomes"
+  | "SyncCurriculumFromCanvas"
+  | "ListCurriculumImports"
+  | "ApplyCurriculumImport"
   | "CreateUploadSession"
   | "ConfirmUpload"
   | "ListDocuments"
   | "DeleteDocument"
+  | "SyncDocumentsFromCanvas"
+  | "UpdateDocumentPlacement"
   | "ListLessons"
   | "GetLesson"
   | "GetLessonCards"
@@ -27,8 +32,16 @@ type CoreMethod =
   | "RejectQuizItem"
   | "UpdateQuizItem"
   | "SubmitQuiz"
+  | "GetCanvasQuizContext"
+  | "CreateQuizSet"
+  | "GetQuizSet"
+  | "GetQuizBuilderContext"
+  | "StartQuizSet"
+  | "SubmitQuizSet"
+  | "GetQuizSetResults"
   | "ListQuizAttempts"
-  | "CreateContentGenerationRequest";
+  | "CreateContentGenerationRequest"
+  | "ListContentGenerationRequests";
 
 type JsonResponse = { json?: string };
 
@@ -55,7 +68,19 @@ export function claimsFromSession(session: LtiSession): BffClaims {
 const PROTO_PATH = resolve(process.cwd(), "proto/core_api.proto");
 const GRPC_HOST = process.env.CORE_API_GRPC_HOST || "core-api:50051";
 
-type GrpcClient = Record<string, Function>;
+type GrpcUnaryMethod = (
+  request: unknown,
+  metadata: grpc.Metadata,
+  callback: (error: grpc.ServiceError | null, response: JsonResponse) => void,
+) => void;
+type GrpcClient = Record<string, GrpcUnaryMethod>;
+type GrpcClientConstructor = new (
+  address: string,
+  credentials: grpc.ChannelCredentials,
+) => GrpcClient;
+type LoadedCorePackage = {
+  ai_lms?: { v1?: { CoreApiService?: GrpcClientConstructor } };
+};
 
 let client: GrpcClient | null = null;
 
@@ -71,7 +96,7 @@ function getClient(): GrpcClient {
     defaults: true,
     oneofs: true,
   });
-  const loaded = grpc.loadPackageDefinition(packageDefinition) as any;
+  const loaded = grpc.loadPackageDefinition(packageDefinition) as unknown as LoadedCorePackage;
   const Service = loaded.ai_lms?.v1?.CoreApiService;
   if (!Service) {
     throw new Error("CoreApiService not found in proto definition");
@@ -118,6 +143,13 @@ async function callCore<TResponse>(
 }
 
 export const coreApi = {
+  canvasQuizContext: <T = unknown>(body: unknown, claims: BffClaims) => callCore<T>("GetCanvasQuizContext", body, claims),
+  createQuizSet: <T = unknown>(body: unknown, claims: BffClaims) => callCore<T>("CreateQuizSet", body, claims),
+  getQuizSet: <T = unknown>(quizSetId: string, claims: BffClaims) => callCore<T>("GetQuizSet", { quizSetId }, claims),
+  quizBuilderContext: <T = unknown>(body: { courseId: string; loIds?: string[] }, claims: BffClaims) => callCore<T>("GetQuizBuilderContext", body, claims),
+  startQuizSet: <T = unknown>(body: unknown, claims: BffClaims) => callCore<T>("StartQuizSet", body, claims),
+  submitQuizSet: <T = unknown>(body: unknown, claims: BffClaims) => callCore<T>("SubmitQuizSet", body, claims),
+  quizSetResults: <T = unknown>(quizSetId: string, claims: BffClaims) => callCore<T>("GetQuizSetResults", { quizSetId }, claims),
   launchSync: <TResponse = unknown>(body: unknown) =>
     callCore<TResponse>("LaunchSync", body, {
       sub: "lti-bootstrap",
@@ -132,6 +164,14 @@ export const coreApi = {
     callCore<TResponse>("ListChapters", { courseId }, claims),
   listLearningOutcomes: <TResponse = unknown>(courseId: string, claims: BffClaims) =>
     callCore<TResponse>("ListLearningOutcomes", { courseId }, claims),
+  syncCurriculumFromCanvas: <TResponse = unknown>(courseId: string, claims: BffClaims) =>
+    callCore<TResponse>("SyncCurriculumFromCanvas", { courseId }, claims),
+  listCurriculumImports: <TResponse = unknown>(
+    body: { courseId: string; limit?: number },
+    claims: BffClaims,
+  ) => callCore<TResponse>("ListCurriculumImports", body, claims),
+  applyCurriculumImport: <TResponse = unknown>(importId: string, claims: BffClaims) =>
+    callCore<TResponse>("ApplyCurriculumImport", { importId }, claims),
   createUploadSession: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
     callCore<TResponse>("CreateUploadSession", body, claims),
   confirmUpload: <TResponse = unknown>(documentId: string, claims: BffClaims) =>
@@ -142,6 +182,13 @@ export const coreApi = {
   ) => callCore<TResponse>("ListDocuments", body, claims),
   deleteDocument: <TResponse = unknown>(documentId: string, claims: BffClaims) =>
     callCore<TResponse>("DeleteDocument", { documentId }, claims),
+  syncDocumentsFromCanvas: <TResponse = unknown>(courseId: string, claims: BffClaims) =>
+    callCore<TResponse>("SyncDocumentsFromCanvas", { courseId }, claims),
+  updateDocumentPlacement: <TResponse = unknown>(
+    documentId: string,
+    placement: { role?: string; chapterCode?: string },
+    claims: BffClaims,
+  ) => callCore<TResponse>("UpdateDocumentPlacement", { documentId, ...placement }, claims),
   listLessons: <TResponse = unknown>(
     body: { courseId: string; status?: string },
     claims: BffClaims,
@@ -182,4 +229,8 @@ export const coreApi = {
     callCore<TResponse>("ListQuizAttempts", { lessonId }, claims),
   createContentGenerationRequest: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
     callCore<TResponse>("CreateContentGenerationRequest", body, claims),
+  listContentGenerationRequests: <TResponse = unknown>(
+    body: { courseId: string; limit?: number; type?: "card" | "quiz" },
+    claims: BffClaims,
+  ) => callCore<TResponse>("ListContentGenerationRequests", body, claims),
 };

@@ -1,4 +1,4 @@
-import { readLtiSession } from "@/lib/session";
+import { readManageSession } from "@/lib/session";
 import { coreApi, claimsFromSession } from "@/lib/core-api";
 import { InstructorNav } from "@/components/instructor-nav";
 
@@ -7,7 +7,8 @@ interface Props {
 }
 
 type Lesson = { lesson_id: string; title: string; status: string; published_at: string | null };
-type Drafts = { cards: unknown[]; quizItems: unknown[] };
+type ReviewItem = { status?: string };
+type Drafts = { cards: ReviewItem[]; quizItems: ReviewItem[] };
 
 function withSid(path: string, sid?: string) {
   if (!sid) return path;
@@ -18,17 +19,23 @@ function withSid(path: string, sid?: string) {
 
 export default async function ManageDashboard({ searchParams }: Props) {
   const sp = await searchParams;
-  const active = await readLtiSession(sp.sid);
-  if (!active) {
+  const access = await readManageSession(sp.sid);
+  if (access.status === "expired") {
     return <main className="p-8 text-slate-700">Phiên hết hạn. Vui lòng mở lại từ LMS.</main>;
   }
+  if (access.status === "forbidden") {
+    return <main className="p-8 text-slate-700">Bạn không có quyền quản lý khóa học này.</main>;
+  }
 
-  const { sid, session } = active;
+  const { sid, session } = access.active;
   const claims = claimsFromSession(session);
   const [lessons, drafts] = await Promise.all([
     coreApi.listLessons<Lesson[]>({ courseId: session.courseId }, claims).catch(() => []),
     coreApi.listReviewDrafts<Drafts>({ courseId: session.courseId }, claims).catch(() => ({ cards: [], quizItems: [] })),
   ]);
+  const reviewItems = [...drafts.cards, ...drafts.quizItems];
+  const readyToPublish = reviewItems.filter((item) => item.status === "APPROVED").length;
+  const waitingForReview = reviewItems.length - readyToPublish;
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950">
@@ -49,9 +56,11 @@ export default async function ManageDashboard({ searchParams }: Props) {
           <p className="mt-2 text-sm text-slate-600">Upload tài liệu và chạy xử lý nội dung.</p>
         </a>
         <a className="rounded border border-slate-200 bg-white p-4 hover:border-slate-400" href={withSid("/manage/review", sid)}>
-          <p className="text-sm text-slate-500">Draft cần duyệt</p>
-          <p className="mt-2 text-2xl font-semibold">{drafts.cards.length + drafts.quizItems.length}</p>
-          <p className="mt-2 text-sm text-slate-600">Duyệt cards và quiz trước khi publish.</p>
+          <p className="text-sm text-slate-500">Quiz & review</p>
+          <p className="mt-2 text-2xl font-semibold">{waitingForReview}</p>
+          <p className="mt-2 text-sm text-slate-600">
+            Cần duyệt · {readyToPublish} mục sẵn sàng publish.
+          </p>
         </a>
         <a className="rounded border border-slate-200 bg-white p-4 hover:border-slate-400" href={withSid(`/learn/courses/${session.courseId}`, sid)}>
           <p className="text-sm text-slate-500">Learner preview</p>

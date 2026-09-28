@@ -8,15 +8,17 @@ export async function POST(
 ) {
   const activeSession = await readSessionFromRequest(request);
   if (!activeSession) {
-    return redirectBack(request, "/manage/review", { error: "Phiên đã hết hạn." });
+    return redirectBack(request, "/manage/curriculum", { error: "Phiên đã hết hạn." });
   }
   try {
     const { id } = await params;
-    await coreApi.approveQuizItem(id, claimsFromSession(activeSession.session));
-    return redirectBack(request, "/manage/review", { success: "Đã approve câu hỏi." });
+    await coreApi.applyCurriculumImport(id, claimsFromSession(activeSession.session));
+    return redirectBack(request, "/manage/curriculum", {
+      success: "Đang áp dụng đề cương vào khoá học.",
+    });
   } catch (error) {
-    return redirectBack(request, "/manage/review", {
-      error: messageFromError(error, "Không thể approve câu hỏi."),
+    return redirectBack(request, "/manage/curriculum", {
+      error: messageFromError(error, "Không thể áp dụng đề cương."),
     });
   }
 }
