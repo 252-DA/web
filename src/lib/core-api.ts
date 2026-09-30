@@ -16,6 +16,9 @@ type CoreMethod =
   | "CreateUploadSession"
   | "ConfirmUpload"
   | "ListDocuments"
+  | "GetDocument"
+  | "GetDocumentChunks"
+  | "GetDocumentFileUrl"
   | "DeleteDocument"
   | "SyncDocumentsFromCanvas"
   | "UpdateDocumentPlacement"
@@ -180,6 +183,15 @@ export const coreApi = {
     body: { courseId: string; limit?: number; offset?: number },
     claims: BffClaims,
   ) => callCore<TResponse>("ListDocuments", body, claims),
+  getDocument: <TResponse = unknown>(documentId: string, claims: BffClaims) =>
+    callCore<TResponse>("GetDocument", { documentId }, claims),
+  // page bỏ trống = cả tài liệu; có page = đúng một trang.
+  getDocumentChunks: <TResponse = unknown>(
+    body: { documentId: string; page?: number },
+    claims: BffClaims,
+  ) => callCore<TResponse>("GetDocumentChunks", body, claims),
+  getDocumentFileUrl: <TResponse = unknown>(documentId: string, claims: BffClaims) =>
+    callCore<TResponse>("GetDocumentFileUrl", { documentId }, claims),
   deleteDocument: <TResponse = unknown>(documentId: string, claims: BffClaims) =>
     callCore<TResponse>("DeleteDocument", { documentId }, claims),
   syncDocumentsFromCanvas: <TResponse = unknown>(courseId: string, claims: BffClaims) =>
