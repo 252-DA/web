@@ -80,3 +80,4 @@ export function EditTabsClient({ microContent, sid, defaultTab = "questions" }: 
     </div>
   );
 }
+

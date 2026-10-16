@@ -42,3 +42,4 @@ export default async function NewMicroContentPage({ searchParams }: Props) {
     </main>
   );
 }
+
