@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ExamSession, LearnerQuizResults, QuizSetSettings } from "@/lib/canvas-quiz";
-import { answerKey, quizChoices } from "@/lib/quiz";
+import { AnswerInput } from "@/components/answer-input";
+import { isAnswered } from "@/lib/question-types";
 
 type Result = {
   score: number;
@@ -10,6 +11,7 @@ type Result = {
   attemptCount?: number;
   totalCorrect: number;
   total: number;
+  pendingCount?: number;
   revealAt: string | null;
 };
 
@@ -163,6 +165,11 @@ export function ExamPanel({
           <p className="mt-2 text-4xl font-bold tabular-nums">
             {points}/{settings.pointsPossible}
           </p>
+          {(result.pendingCount ?? 0) > 0 && (
+            <p className="mt-1 text-sm">
+              Điểm tạm tính: {result.pendingCount} câu tự luận đang được AI chấm, chưa cộng vào điểm.
+            </p>
+          )}
           <p className="mt-1 text-sm">
             Đúng {result.totalCorrect}/{result.total} câu
             {(result.attemptCount ?? 1) > 1 && result.bestScore !== undefined &&
@@ -188,7 +195,7 @@ export function ExamPanel({
   }
 
   if (session) {
-    const unanswered = session.items.filter((i) => !Object.hasOwn(answers, i.quiz_id)).length;
+    const unanswered = session.items.filter((i) => !isAnswered(i.type, answers[i.quiz_id])).length;
     return (
       <div className="space-y-4">
         <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white/95 px-4 py-3 shadow-sm">
@@ -212,36 +219,18 @@ export function ExamPanel({
             <legend className="sr-only">Câu {index + 1}</legend>
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Câu {index + 1}</p>
             <p className="mt-2 font-semibold leading-7">{item.question}</p>
-            <div className="mt-3 grid gap-2">
-              {quizChoices(item.options).map((choice, i) => {
-                const selected = answerKey(answers[item.quiz_id]) === answerKey(choice.value);
-                return (
-                  <label
-                    key={`${choice.key}-${i}`}
-                    className={
-                      selected
-                        ? "flex cursor-pointer gap-3 rounded-xl border border-sky-500 bg-sky-50 p-3 text-sm text-sky-950 ring-2 ring-sky-100"
-                        : "flex cursor-pointer gap-3 rounded-xl border border-slate-200 p-3 text-sm text-slate-700 hover:border-slate-400"
-                    }
-                  >
-                    <input
-                      type="radio"
-                      name={item.quiz_id}
-                      checked={selected}
-                      onChange={() =>
-                        setAnswers((prev) => {
-                          const next = { ...prev, [item.quiz_id]: choice.value };
-                          saveDraft(session.sessionId, next);
-                          return next;
-                        })
-                      }
-                      className="mt-0.5"
-                    />
-                    <span className="font-semibold text-slate-400">{String.fromCharCode(65 + i)}</span>
-                    <span>{choice.label}</span>
-                  </label>
-                );
-              })}
+            <div className="mt-3">
+              <AnswerInput
+                item={item}
+                value={answers[item.quiz_id]}
+                onChange={(value) =>
+                  setAnswers((prev) => {
+                    const next = { ...prev, [item.quiz_id]: value };
+                    saveDraft(session.sessionId, next);
+                    return next;
+                  })
+                }
+              />
             </div>
           </fieldset>
         ))}

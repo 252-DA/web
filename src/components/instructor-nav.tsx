@@ -1,9 +1,11 @@
-type InstructorNavItem = "dashboard" | "curriculum" | "documents" | "quizzes" | "review" | "learner";
+type InstructorNavItem = "dashboard" | "curriculum" | "documents" | "quizzes" | "review" | "learner" | "models";
 
 type Props = {
   active: InstructorNavItem;
   courseId: string;
   sid?: string;
+  /** Admin của LMS thấy thêm trang chọn model AI (áp dụng cho mọi khoá học). */
+  isAdmin?: boolean;
 };
 
 function withSid(path: string, sid?: string) {
@@ -13,7 +15,7 @@ function withSid(path: string, sid?: string) {
   return `${url.pathname}?${url.searchParams.toString()}`;
 }
 
-export function InstructorNav({ active, courseId, sid }: Props) {
+export function InstructorNav({ active, courseId, sid, isAdmin }: Props) {
   const items = [
     { key: "dashboard", label: "Dashboard", href: "/manage/dashboard" },
     { key: "curriculum", label: "Đề cương", href: "/manage/curriculum" },
@@ -21,6 +23,7 @@ export function InstructorNav({ active, courseId, sid }: Props) {
     { key: "quizzes", label: "Soạn đề", href: "/manage/quizzes/new" },
     { key: "review", label: "Quiz & Review", href: "/manage/review" },
     { key: "learner", label: "Learner preview", href: `/learn/courses/${courseId}` },
+    ...(isAdmin ? [{ key: "models", label: "Model AI", href: "/manage/models" }] : []),
   ] as const;
 
   return (

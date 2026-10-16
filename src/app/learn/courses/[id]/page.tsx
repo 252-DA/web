@@ -44,7 +44,7 @@ export default async function CoursePage({ params, searchParams }: Props) {
           <h1 className="text-2xl font-semibold">{course.name}</h1>
           {course.description && <p className="mt-2 text-sm text-slate-600">{course.description}</p>}
           {(session.courseRole === "instructor" || session.courseRole === "ta") && (
-            <InstructorNav active="learner" courseId={session.courseId} sid={sid} />
+            <InstructorNav active="learner" courseId={session.courseId} sid={sid} isAdmin={session.role === "administrator"} />
           )}
         </div>
       </header>

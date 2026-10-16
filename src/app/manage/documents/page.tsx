@@ -102,7 +102,7 @@ export default async function DocumentsPage({ searchParams }: Props) {
               Đồng bộ từ Module trên Canvas hoặc upload trực tiếp; theo dõi pipeline và chương của từng tài liệu.
             </p>
           </div>
-          <InstructorNav active="documents" courseId={session.courseId} sid={sid} />
+          <InstructorNav active="documents" courseId={session.courseId} sid={sid} isAdmin={session.role === "administrator"} />
         </div>
       </header>
 

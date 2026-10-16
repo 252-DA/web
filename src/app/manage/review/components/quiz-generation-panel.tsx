@@ -10,6 +10,7 @@ import {
   type ContentGenerationRequest,
   type LearningOutcomeOption,
 } from "@/lib/quiz";
+import { QUESTION_TYPES, type QuestionType } from "@/lib/question-types";
 
 type Props = {
   courseId: string;
@@ -102,6 +103,7 @@ export function QuizGenerationPanel({
   );
   const [targetId, setTargetId] = useState(learningOutcomes[0]?.lo_id ?? "");
   const [count, setCount] = useState(5);
+  const [questionType, setQuestionType] = useState<QuestionType>("MCQ_SINGLE");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const submitting = useRef(false);
@@ -171,7 +173,7 @@ export function QuizGenerationPanel({
       const response = await fetch(withSid("/api/content-generations", sid), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ targetId, count }),
+        body: JSON.stringify({ targetId, count, questionType }),
       });
       if (!response.ok) throw new Error(await responseError(response));
       const createdPayload: unknown = await response.json();
@@ -219,7 +221,7 @@ export function QuizGenerationPanel({
         </ol>
       </div>
 
-      <form onSubmit={submit} className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_170px_180px_auto] lg:items-end lg:p-6">
+      <form onSubmit={submit} className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_120px_210px_160px_auto] lg:items-end lg:p-6">
         <label className="grid gap-1.5 text-sm font-medium text-slate-800">
           Learning outcome
           <select
@@ -246,6 +248,21 @@ export function QuizGenerationPanel({
             onChange={(event) => setCount(Number(event.target.value))}
             className="h-11 rounded-lg border border-slate-300 px-3 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
           />
+        </label>
+
+        <label className="grid gap-1.5 text-sm font-medium text-slate-800">
+          Kiểu câu hỏi
+          <select
+            value={questionType}
+            onChange={(event) => setQuestionType(event.target.value as QuestionType)}
+            className="h-11 rounded-lg border border-slate-300 bg-white px-3 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
+          >
+            {QUESTION_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </select>
         </label>
 
         <div className="grid gap-1.5 text-sm font-medium text-slate-800">

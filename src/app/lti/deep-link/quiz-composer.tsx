@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CanvasQuizContext, ReviewQuiz } from "@/lib/canvas-quiz";
 import type { ContentGenerationRequest } from "@/lib/quiz";
 import { bloomLabel, isActiveRequest } from "@/lib/quiz";
+import { editFromForm, QUESTION_TYPES, type QuestionType } from "@/lib/question-types";
 import {
   DISCARDED,
   ghostButton,
@@ -97,6 +98,7 @@ export function QuizComposer({
   const [loIds, setLoIds] = useState(initial.learningOutcomes.map((lo) => lo.lo_id));
   const [perLo, setPerLo] = useState(3);
   const [bloom, setBloom] = useState<Bloom>("auto");
+  const [questionType, setQuestionType] = useState<QuestionType>("MCQ_SINGLE");
   const [title, setTitle] = useState(`Quiz ${initial.module.name}`);
   const [settings, setSettings] = useState<QuizSettingsDraft>(DEFAULT_SETTINGS);
   const [selected, setSelected] = useState<string[]>([]);
@@ -197,7 +199,13 @@ export function QuizComposer({
     setGenerating(true);
     setNotice(null);
     try {
-      const result = await post({ action: "generate", targetIds: loIds, count: perLo, bloomLevel: bloom });
+      const result = await post({
+        action: "generate",
+        targetIds: loIds,
+        count: perLo,
+        bloomLevel: bloom,
+        questionType,
+      });
       for (const r of result.requests ?? []) runningIds.current.add(r.request_id);
       setNotice({
         kind: "info",
@@ -255,14 +263,7 @@ export function QuizComposer({
 
   function save(quiz: ReviewQuiz, form: FormData) {
     return withPending([quiz.quiz_id], async () => {
-      await post({
-        action: "edit",
-        quizId: quiz.quiz_id,
-        question: form.get("question"),
-        explanation: form.get("explanation"),
-        options: [0, 1, 2, 3].map((i) => form.get(`option_${i}`)),
-        correctIndex: Number(form.get("correctIndex")),
-      });
+      await post({ action: "edit", quizId: quiz.quiz_id, ...editFromForm(quiz.type, form) });
       setSelected((ids) => ids.filter((id) => id !== quiz.quiz_id));
       await refresh();
       setNotice({ kind: "info", text: "Đã lưu. Bấm “Giữ” để duyệt lại câu vừa sửa." });
@@ -463,6 +464,20 @@ export function QuizComposer({
                     {[1, 2, 3, 4, 5, 6].map((level) => (
                       <option key={level} value={level}>
                         {bloomLabel(level)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1 text-xs font-medium text-slate-600">
+                  Kiểu câu hỏi
+                  <select
+                    className={`${inputClass} w-48`}
+                    value={questionType}
+                    onChange={(e) => setQuestionType(e.target.value as QuestionType)}
+                  >
+                    {QUESTION_TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
                       </option>
                     ))}
                   </select>

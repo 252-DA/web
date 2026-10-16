@@ -43,8 +43,18 @@ type CoreMethod =
   | "SubmitQuizSet"
   | "GetQuizSetResults"
   | "ListQuizAttempts"
+  | "ListEssaysForReview"
+  | "GradeEssayAnswer"
+  | "RetryEssayGrading"
   | "CreateContentGenerationRequest"
-  | "ListContentGenerationRequests";
+  | "ListContentGenerationRequests"
+  | "ListModelBindings"
+  | "SetModelBinding"
+  | "CreateEssayProcessor"
+  | "UpdateEssayProcessor"
+  | "GetEssayProcessor"
+  | "ReceiveAssetNotices"
+  | "GetEssayReport";
 
 type JsonResponse = { json?: string };
 
@@ -239,10 +249,44 @@ export const coreApi = {
     callCore<TResponse>("SubmitQuiz", body, claims),
   listQuizAttempts: <TResponse = unknown>(lessonId: string, claims: BffClaims) =>
     callCore<TResponse>("ListQuizAttempts", { lessonId }, claims),
+  listEssaysForReview: <TResponse = unknown>(courseId: string, claims: BffClaims) =>
+    callCore<TResponse>("ListEssaysForReview", { courseId }, claims),
+  gradeEssayAnswer: <TResponse = unknown>(
+    body: { attemptId: string; score: string; feedback?: string },
+    claims: BffClaims,
+  ) => callCore<TResponse>("GradeEssayAnswer", body, claims),
+  retryEssayGrading: <TResponse = unknown>(attemptId: string, claims: BffClaims) =>
+    callCore<TResponse>("RetryEssayGrading", { attemptId }, claims),
   createContentGenerationRequest: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
     callCore<TResponse>("CreateContentGenerationRequest", body, claims),
   listContentGenerationRequests: <TResponse = unknown>(
     body: { courseId: string; limit?: number; type?: "card" | "quiz" },
     claims: BffClaims,
   ) => callCore<TResponse>("ListContentGenerationRequests", body, claims),
+  // Chọn model AI theo task — chỉ admin; core-api kiểm tra quyền và tên profile.
+  listModelBindings: <TResponse = unknown>(claims: BffClaims) =>
+    callCore<TResponse>("ListModelBindings", {}, claims),
+  setModelBinding: <TResponse = unknown>(
+    body: { task: string; profile: string | null },
+    claims: BffClaims,
+  ) => callCore<TResponse>("SetModelBinding", body, claims),
+  // Chấm bài luận nộp file qua LTI Asset Processor (docs/essay-asset-processor.md).
+  createEssayProcessor: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
+    callCore<TResponse>("CreateEssayProcessor", body, claims),
+  updateEssayProcessor: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
+    callCore<TResponse>("UpdateEssayProcessor", body, claims),
+  getEssayProcessor: <TResponse = unknown>(processorId: string, claims: BffClaims) =>
+    callCore<TResponse>("GetEssayProcessor", { processorId }, claims),
+  // Thông báo của Canvas không có phiên người dùng: web chuyển đi bằng danh
+  // tính hệ thống mà core-api chỉ chấp nhận cho RPC này.
+  receiveAssetNotices: <TResponse = unknown>(notices: unknown[]) =>
+    callCore<TResponse>("ReceiveAssetNotices", { notices }, {
+      sub: "lti-notice",
+      roles: ["system"],
+      scope: "admin",
+    }),
+  getEssayReport: <TResponse = unknown>(
+    body: { submissionId: string; userSub: string },
+    claims: BffClaims,
+  ) => callCore<TResponse>("GetEssayReport", body, claims),
 };

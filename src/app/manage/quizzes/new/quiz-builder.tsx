@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { QuizBuilderContext, ReviewQuiz } from "@/lib/canvas-quiz";
 import { bloomLabel, isActiveRequest, type ContentGenerationRequest } from "@/lib/quiz";
+import { editFromForm, QUESTION_TYPES, questionTypeLabel, type QuestionType } from "@/lib/question-types";
 import {
   DISCARDED,
   ghostButton,
@@ -88,6 +89,7 @@ export function QuizBuilder({ sid, flow, initial }: { sid?: string; flow?: strin
   const [excluded, setExcluded] = useState<string[]>([]);
   const [matrix, setMatrix] = useState<Record<string, number>>({});
   const [quick, setQuick] = useState<Record<number, number>>({ 1: 2, 2: 2, 3: 1 });
+  const [questionType, setQuestionType] = useState<QuestionType>("MCQ_SINGLE");
   const [selected, setSelected] = useState<string[]>([]);
   const [pending, setPending] = useState<string[]>([]);
   const [notice, setNotice] = useState<Notice>(null);
@@ -230,7 +232,7 @@ export function QuizBuilder({ sid, flow, initial }: { sid?: string; flow?: strin
     setGenerating(true);
     setNotice(null);
     try {
-      const result = await post({ action: "generate", cells, documentIds: docIds });
+      const result = await post({ action: "generate", cells, documentIds: docIds, questionType });
       for (const r of result.requests ?? []) runningIds.current.add(r.request_id);
       setNotice({ kind: "info", text: `Đang sinh ${total} câu cho ${cells.length} ô của ma trận. Câu mới hiện ở mục 5.` });
       await refresh();
@@ -292,14 +294,7 @@ export function QuizBuilder({ sid, flow, initial }: { sid?: string; flow?: strin
 
   function saveEdit(quiz: ReviewQuiz, form: FormData) {
     return withPending([quiz.quiz_id], async () => {
-      await post({
-        action: "edit",
-        quizId: quiz.quiz_id,
-        question: form.get("question"),
-        explanation: form.get("explanation"),
-        options: [0, 1, 2, 3].map((i) => form.get(`option_${i}`)),
-        correctIndex: Number(form.get("correctIndex")),
-      });
+      await post({ action: "edit", quizId: quiz.quiz_id, ...editFromForm(quiz.type, form) });
       setSelected((ids) => ids.filter((id) => id !== quiz.quiz_id));
       await refresh();
       setNotice({ kind: "info", text: "Đã lưu. Bấm “Giữ” để duyệt lại câu vừa sửa." });
@@ -527,6 +522,20 @@ export function QuizBuilder({ sid, flow, initial }: { sid?: string; flow?: strin
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-sm text-slate-600">
+              Kiểu câu hỏi
+              <select
+                className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm"
+                value={questionType}
+                onChange={(e) => setQuestionType(e.target.value as QuestionType)}
+              >
+                {QUESTION_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <button
               type="button"
               disabled={Boolean(generateBlocker) || generating}
@@ -549,8 +558,8 @@ export function QuizBuilder({ sid, flow, initial }: { sid?: string; flow?: strin
               const level = BLOOM_NAMES.indexOf(String(s.bloom_level));
               return (
                 <li key={key} className="flex items-center gap-2">
-                  <span className="w-40 truncate font-medium">
-                    {lo?.code} · {bloomLabel(level)}
+                  <span className="w-52 truncate font-medium">
+                    {lo?.code} · {bloomLabel(level)} · {questionTypeLabel(String(s.question_type ?? "MCQ_SINGLE"), true)}
                   </span>
                   {isActiveRequest(r) ? (
                     <span className="flex items-center gap-2 text-sky-800">

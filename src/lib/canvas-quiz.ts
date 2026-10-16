@@ -48,9 +48,18 @@ export type CanvasQuizContext = {
 };
 
 /** Trạng thái điểm của sinh viên so với sổ điểm Canvas (xem core-api quiz-set-results.ts). */
-export type GradeSync = "POSTED" | "SENDING" | "WAITING_PUBLISH" | "FAILED" | "NOT_REQUIRED";
+export type GradeSync =
+  | "GRADING"
+  | "NEEDS_REVIEW"
+  | "POSTED"
+  | "SENDING"
+  | "WAITING_PUBLISH"
+  | "FAILED"
+  | "NOT_REQUIRED";
 
 export const GRADE_SYNC: Record<GradeSync, { label: string; tone: string }> = {
+  GRADING: { label: "AI đang chấm tự luận", tone: "bg-violet-50 text-violet-800" },
+  NEEDS_REVIEW: { label: "Chờ giảng viên chấm tự luận", tone: "bg-amber-50 text-amber-900" },
   POSTED: { label: "Đã ghi vào Canvas", tone: "bg-emerald-50 text-emerald-800" },
   SENDING: { label: "Đang gửi về Canvas", tone: "bg-sky-50 text-sky-800" },
   WAITING_PUBLISH: { label: "Chờ publish bài tập", tone: "bg-amber-50 text-amber-900" },
@@ -72,11 +81,17 @@ export type LearnerQuizResults = {
   revealAt?: string | null;
   review?: Array<{
     quiz_id: string;
+    type: string;
     question: string;
     options: unknown;
     chosen: unknown;
     correct_answer: unknown;
     is_correct: boolean;
+    /** 0–100; tự luận có điểm từng phần. */
+    score: number;
+    grading_status: string;
+    /** Tự luận: nhận xét của AI chấm. */
+    feedback: string | null;
     explanation: string | null;
   }> | null;
 };
@@ -98,6 +113,7 @@ export type StaffQuizResults = {
   settings: QuizSetSettings;
   items: Array<{
     quiz_id: string;
+    type: string;
     question: string;
     options: unknown;
     correct_answer: unknown;
@@ -106,6 +122,7 @@ export type StaffQuizResults = {
     lo_code: string | null;
     answered: number;
     correct: number;
+    averageScore: number | null;
   }>;
   byLo: Array<{ lo_id: string; code: string; statement: string; questions: number; correctRate: number | null }>;
   students: Array<{
@@ -123,7 +140,21 @@ export type StaffQuizResults = {
     averageBest: number | null;
     waitingForPublish: number;
     failed: number;
+    /** Lượt nộp có tự luận AI không chấm được, chờ giảng viên ở trang Review. */
+    needsReview: number;
   };
+};
+
+/** Câu tự luận chờ giảng viên chấm tay (core-api EssayGradingService.list). */
+export type EssayForReview = {
+  attemptId: string;
+  submissionId: string | null;
+  attemptedAt: string | null;
+  student: string;
+  assignment: string | null;
+  answer: unknown;
+  /** Đề lúc người học nộp; null với bài nộp không lưu đề (chỉ chấm tay được). */
+  gradingInput: { type: string; question: string; correct_answer: unknown } | null;
 };
 
 /** Dữ liệu trang Soạn đề (core-api QuizSetService.builderContext). */

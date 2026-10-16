@@ -1,12 +1,9 @@
 import { InstructorNav } from "@/components/instructor-nav";
+import type { EssayForReview } from "@/lib/canvas-quiz";
 import { claimsFromSession, coreApi } from "@/lib/core-api";
-import {
-  answerKey,
-  bloomLabel,
-  quizChoices,
-  type ContentGenerationRequest,
-  type LearningOutcomeOption,
-} from "@/lib/quiz";
+import { bloomLabel, type ContentGenerationRequest, type LearningOutcomeOption } from "@/lib/quiz";
+import { hasValidAnswer, questionTypeLabel } from "@/lib/question-types";
+import { AnswerReview } from "@/components/answer-review";
 import { readManageSession } from "@/lib/session";
 import { QuizGenerationPanel } from "./components/quiz-generation-panel";
 
@@ -42,6 +39,12 @@ type QuizDraft = {
   learning_outcomes?: LearningOutcomeRef | null;
 };
 type Drafts = { cards: CardDraft[]; quizItems: QuizDraft[] };
+
+const time = new Intl.DateTimeFormat("vi-VN", {
+  dateStyle: "short",
+  timeStyle: "short",
+  timeZone: "Asia/Ho_Chi_Minh",
+});
 type RawLearningOutcome = LearningOutcomeRef & { chapters?: { title?: string } };
 
 function first(value?: string | string[]) {
@@ -94,7 +97,7 @@ export default async function ReviewPage({ searchParams }: Props) {
     error = err instanceof Error ? err.message : "Không thể tải review inbox.";
   }
 
-  const [rawLearningOutcomes, recentRequests] = await Promise.all([
+  const [rawLearningOutcomes, recentRequests, essays] = await Promise.all([
     coreApi.listLearningOutcomes<RawLearningOutcome[]>(session.courseId, claims).catch(() => []),
     coreApi
       .listContentGenerationRequests<ContentGenerationRequest[]>(
@@ -103,6 +106,7 @@ export default async function ReviewPage({ searchParams }: Props) {
       )
       .then((requests) => requests.filter((request) => request.type === "quiz"))
       .catch(() => []),
+    coreApi.listEssaysForReview<EssayForReview[]>(session.courseId, claims).catch(() => []),
   ]);
   const learningOutcomes: LearningOutcomeOption[] = rawLearningOutcomes.map((lo) => ({
     lo_id: lo.lo_id,
@@ -132,7 +136,7 @@ export default async function ReviewPage({ searchParams }: Props) {
           <p className="mt-1 text-sm text-slate-600">
             Tạo câu hỏi từ tài liệu khóa học, kiểm tra đáp án và giải thích trước khi publish.
           </p>
-          <InstructorNav active="review" courseId={session.courseId} sid={sid} />
+          <InstructorNav active="review" courseId={session.courseId} sid={sid} isAdmin={session.role === "administrator"} />
         </div>
       </header>
 
@@ -162,6 +166,8 @@ export default async function ReviewPage({ searchParams }: Props) {
         {error && <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         {actionError && <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{actionError}</p>}
         {actionSuccess && <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{actionSuccess}</p>}
+
+        {essays.length > 0 && <EssayQueue essays={essays} sid={sid} />}
 
         <div className="flex items-end justify-between gap-4">
           <div>
@@ -210,44 +216,24 @@ export default async function ReviewPage({ searchParams }: Props) {
 
               <div className="divide-y divide-slate-200">
                 {quizzes.map((quiz, quizIndex) => {
-                  const choices = quizChoices(quiz.options);
-                  const correctKey = answerKey(quiz.correct_answer);
-                  const correctFound = choices.some((choice) => answerKey(choice.value) === correctKey);
+                  const correctFound = hasValidAnswer(quiz);
                   const meta = statusMeta(quiz.status);
                   return (
                     <article key={quiz.quiz_id} className="p-5">
                       <div className="flex flex-wrap items-center gap-2 text-xs">
                         <span className="font-semibold uppercase tracking-wide text-slate-500">Câu {quizIndex + 1}</span>
                         <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 font-medium text-slate-600">AI generated</span>
-                        <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 font-medium text-slate-600">{quiz.type}</span>
+                        <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 font-medium text-slate-600">{questionTypeLabel(quiz.type)}</span>
                         <span className={`rounded-full border px-2 py-0.5 font-semibold ${meta.className}`}>{meta.label}</span>
                       </div>
 
                       <h4 className="mt-3 text-base font-semibold leading-7 text-slate-950">{quiz.question}</h4>
-                      <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                        {choices.map((choice, index) => {
-                          const isCorrect = answerKey(choice.value) === correctKey;
-                          return (
-                            <div
-                              key={`${choice.key}-${index}`}
-                              className={
-                                isCorrect
-                                  ? "flex gap-3 rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-950"
-                                  : "flex gap-3 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700"
-                              }
-                            >
-                              <span className={isCorrect ? "font-bold text-emerald-700" : "font-semibold text-slate-400"}>
-                                {String.fromCharCode(65 + index)}
-                              </span>
-                              <span className="flex-1">{choice.label}</span>
-                              {isCorrect && <span className="font-semibold text-emerald-700">Đáp án đúng</span>}
-                            </div>
-                          );
-                        })}
+                      <div className="mt-4">
+                        <AnswerReview type={quiz.type} options={quiz.options} correctAnswer={quiz.correct_answer} compact />
                       </div>
                       {!correctFound && (
                         <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                          Đáp án đúng không khớp với các lựa chọn: {String(quiz.correct_answer)}
+                          Đáp án đúng không đúng dạng của kiểu câu: {JSON.stringify(quiz.correct_answer)}
                         </p>
                       )}
 
@@ -351,5 +337,85 @@ export default async function ReviewPage({ searchParams }: Props) {
         )}
       </section>
     </main>
+  );
+}
+
+/** Tự luận AI không chấm được: giảng viên chấm tay hoặc giao lại cho AI. */
+function EssayQueue({ essays, sid }: { essays: EssayForReview[]; sid?: string }) {
+  return (
+    <section className="overflow-hidden rounded-2xl border border-amber-200 bg-white shadow-sm">
+      <div className="border-b border-amber-200 bg-amber-50 p-5">
+        <h2 className="text-lg font-semibold">Tự luận chờ giảng viên chấm</h2>
+        <p className="mt-1 text-sm leading-6 text-amber-900">
+          AI không chấm được {essays.length} câu. Điểm của các lượt nộp này chưa gửi về Canvas cho tới khi mọi câu
+          trong lượt có điểm.
+        </p>
+      </div>
+      <div className="divide-y divide-slate-200">
+        {essays.map((essay) => {
+          const answer = typeof essay.answer === "string" && essay.answer.trim() ? essay.answer : null;
+          return (
+            <article key={essay.attemptId} className="p-5">
+              <p className="flex flex-wrap gap-x-2 text-xs text-slate-500">
+                <span className="font-semibold text-slate-700">{essay.student}</span>
+                {essay.assignment && <span>· {essay.assignment}</span>}
+                {essay.attemptedAt && <span>· nộp {time.format(new Date(essay.attemptedAt))}</span>}
+              </p>
+              <h3 className="mt-2 font-semibold leading-7">
+                {essay.gradingInput?.question ?? "Bài nộp không lưu đề lúc làm bài, hãy đối chiếu đề trong bài tập."}
+              </h3>
+              <div className="mt-3 grid gap-2">
+                <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Bài làm</p>
+                  <p className="mt-1 whitespace-pre-wrap leading-6 text-slate-800">{answer ?? "(bỏ trống)"}</p>
+                </div>
+                {essay.gradingInput && (
+                  <AnswerReview type="SHORT_ANSWER" options={null} correctAnswer={essay.gradingInput.correct_answer} />
+                )}
+              </div>
+              <div className="mt-4 flex flex-wrap items-end gap-3">
+                <form
+                  method="post"
+                  action={withSid(`/api/review/essays/${essay.attemptId}/grade`, sid)}
+                  className="flex min-w-0 flex-1 flex-wrap items-end gap-2"
+                >
+                  <label className="text-xs font-semibold text-slate-600">
+                    Điểm (0–100)
+                    <input
+                      name="score"
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      required
+                      className="mt-1 block h-10 w-24 rounded-lg border border-slate-300 px-3 text-sm"
+                    />
+                  </label>
+                  <label className="min-w-56 flex-1 text-xs font-semibold text-slate-600">
+                    Nhận xét cho sinh viên
+                    <input
+                      name="feedback"
+                      maxLength={2000}
+                      placeholder="Không bắt buộc"
+                      className="mt-1 block h-10 w-full rounded-lg border border-slate-300 px-3 text-sm font-normal"
+                    />
+                  </label>
+                  <button className="h-10 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white hover:bg-slate-800">
+                    Lưu điểm
+                  </button>
+                </form>
+                {essay.gradingInput && (
+                  <form method="post" action={withSid(`/api/review/essays/${essay.attemptId}/retry`, sid)}>
+                    <button className="h-10 rounded-lg border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:border-slate-500">
+                      Cho AI chấm lại
+                    </button>
+                  </form>
+                )}
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
   );
 }

@@ -46,7 +46,7 @@ export default async function ManageDashboard({ searchParams }: Props) {
           <p className="mt-1 text-sm text-slate-600">
             {session.displayName || session.lmsSub} · {session.courseId}
           </p>
-          <InstructorNav active="dashboard" courseId={session.courseId} sid={sid} />
+          <InstructorNav active="dashboard" courseId={session.courseId} sid={sid} isAdmin={session.role === "administrator"} />
         </div>
       </header>
       <section className="mx-auto grid max-w-6xl gap-4 px-4 py-6 md:grid-cols-3">

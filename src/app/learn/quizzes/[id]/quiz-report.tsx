@@ -1,5 +1,7 @@
 import { GRADE_SYNC, type StaffQuizResults } from "@/lib/canvas-quiz";
-import { answerKey, bloomLabel, quizChoices } from "@/lib/quiz";
+import { bloomLabel } from "@/lib/quiz";
+import { questionTypeLabel } from "@/lib/question-types";
+import { AnswerReview } from "@/components/answer-review";
 
 const time = new Intl.DateTimeFormat("vi-VN", {
   dateStyle: "short",
@@ -48,6 +50,12 @@ export function QuizReport({ report }: { report: StaffQuizResults }) {
           <p className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             Bài tập chưa được <strong>Publish</strong> trên Canvas nên điểm của {summary.waitingForPublish} sinh viên đang
             chờ. Vào Modules bấm Publish, điểm sẽ tự vào sổ trong vài phút.
+          </p>
+        )}
+        {summary.needsReview > 0 && (
+          <p className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            AI không chấm được tự luận của {summary.needsReview} lượt nộp. Điểm các lượt này chưa gửi về Canvas cho
+            tới khi bạn chấm tay hoặc cho AI chấm lại ở trang <strong>Review</strong> của khóa học.
           </p>
         )}
         {summary.failed > 0 && (
@@ -133,36 +141,30 @@ export function QuizReport({ report }: { report: StaffQuizResults }) {
         <section className="space-y-3">
           <h2 className="font-semibold">Câu hỏi và đáp án</h2>
           {report.items.map((item, index) => {
-            const correctKey = answerKey(item.correct_answer);
-            const rate = item.answered ? Math.round((100 * item.correct) / item.answered) : null;
+            // Tự luận có điểm từng phần: điểm trung bình nói nhiều hơn tỉ lệ đúng hết.
+            const essay = item.type === "SHORT_ANSWER";
+            const rate = essay
+              ? item.averageScore
+              : item.answered
+                ? Math.round((100 * item.correct) / item.answered)
+                : null;
             return (
               <article key={item.quiz_id} className="rounded-xl border border-slate-200 bg-white p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
                   <span>
                     Câu {index + 1}
                     {item.lo_code && <> · <strong className="text-slate-700">{item.lo_code}</strong></>} ·{" "}
-                    {bloomLabel(item.bloom_level)}
+                    {bloomLabel(item.bloom_level)} · {questionTypeLabel(item.type, true)}
                   </span>
                   {item.answered > 0 && (
                     <span className="flex items-center gap-2">
-                      Đúng {item.correct}/{item.answered} <Rate value={rate} />
+                      {essay ? `Điểm TB của ${item.answered} bài` : `Đúng ${item.correct}/${item.answered}`} <Rate value={rate} />
                     </span>
                   )}
                 </div>
                 <p className="mt-2 font-medium leading-6">{item.question}</p>
-                <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
-                  {quizChoices(item.options).map((c, i) => {
-                    const correct = answerKey(c.value) === correctKey;
-                    return (
-                      <p
-                        key={c.key}
-                        className={`rounded-lg border px-3 py-1.5 text-sm ${correct ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-slate-200 text-slate-700"}`}
-                      >
-                        <strong>{String.fromCharCode(65 + i)}.</strong> {c.label}
-                        {correct && <span className="ml-1 text-xs">✓</span>}
-                      </p>
-                    );
-                  })}
+                <div className="mt-2">
+                  <AnswerReview type={item.type} options={item.options} correctAnswer={item.correct_answer} compact />
                 </div>
                 {item.explanation && (
                   <details className="mt-2 text-sm text-slate-600">

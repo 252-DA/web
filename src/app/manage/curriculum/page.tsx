@@ -254,7 +254,7 @@ export default async function CurriculumPage({ searchParams }: Props) {
           <p className="mt-1 text-sm text-slate-600">
             Lấy đề cương từ trang Chương trình học trên Canvas, duyệt phần trích xuất rồi áp dụng cho khoá học.
           </p>
-          <InstructorNav active="curriculum" courseId={session.courseId} sid={sid} />
+          <InstructorNav active="curriculum" courseId={session.courseId} sid={sid} isAdmin={session.role === "administrator"} />
         </div>
       </header>
 

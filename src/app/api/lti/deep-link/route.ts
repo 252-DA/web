@@ -7,7 +7,8 @@ import {
   DeepLinkError,
   loadQuizContext,
 } from "@/lib/lti-deep-link-session";
-import { answerKey, isActiveRequest, quizChoices } from "@/lib/quiz";
+import { isActiveRequest } from "@/lib/quiz";
+import { hasValidAnswer, isQuestionType } from "@/lib/question-types";
 
 const BLOOM = ["", "remember", "understand", "apply", "analyze", "evaluate", "create"];
 
@@ -15,12 +16,6 @@ function chapterOf(scope: unknown) {
   return scope && typeof scope === "object" && "chapter_id" in scope
     ? String((scope as { chapter_id: unknown }).chapter_id)
     : null;
-}
-
-function hasValidAnswer(quiz: { options: unknown; correct_answer: unknown }) {
-  return quizChoices(quiz.options).some(
-    (c) => answerKey(c.value) === answerKey(quiz.correct_answer),
-  );
 }
 
 function access(request: NextRequest) {
@@ -74,6 +69,8 @@ export async function POST(request: NextRequest) {
           (!Number.isInteger(bloomLevel) || bloomLevel < 1 || bloomLevel > 6))
       )
         throw new DeepLinkError("Chọn 1–10 câu mỗi LO và mức Bloom hợp lệ.");
+      const questionType = body.questionType ?? "MCQ_SINGLE";
+      if (!isQuestionType(questionType)) throw new DeepLinkError("Kiểu câu hỏi không hợp lệ.");
       // Chỉ chặn khi chính chương này đang sinh; yêu cầu của chương khác
       // không liên quan tới hộp thoại đang mở.
       if (
@@ -103,6 +100,7 @@ export async function POST(request: NextRequest) {
                 count: body.count,
                 bloom_level: BLOOM[level] ?? "understand",
                 style: "quiz",
+                question_type: questionType,
               },
             },
             active.claims,
@@ -139,33 +137,17 @@ export async function POST(request: NextRequest) {
       );
     }
     if (body.action === "edit") {
-      const question =
-        typeof body.question === "string" ? body.question.trim() : "";
-      const options = Array.isArray(body.options)
-        ? body.options.map((o: unknown) =>
-            typeof o === "string" ? o.trim() : "",
-          )
-        : [];
-      if (
-        !question ||
-        options.length !== 4 ||
-        options.some((o: string) => !o) ||
-        new Set(options.map((o: string) => o.toLowerCase())).size !== 4 ||
-        !Number.isInteger(body.correctIndex) ||
-        body.correctIndex < 0 ||
-        body.correctIndex > 3 ||
-        typeof body.explanation !== "string"
-      )
-        throw new DeepLinkError(
-          "Nhập câu hỏi, bốn phương án khác nhau và đáp án đúng.",
-        );
+      // Đáp án được core-api kiểm tra theo kiểu thật của câu (quiz/question-types.ts).
+      const question = typeof body.question === "string" ? body.question.trim() : "";
+      if (!question || typeof body.explanation !== "string")
+        throw new DeepLinkError("Nhập câu hỏi và giải thích.");
       return NextResponse.json(
         await coreApi.updateQuizItem(
           quiz.quiz_id,
           {
             question,
-            options,
-            correct_answer: options[body.correctIndex],
+            options: body.options,
+            correct_answer: body.correct_answer,
             explanation: body.explanation.trim(),
           },
           active.claims,
