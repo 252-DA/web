@@ -54,7 +54,24 @@ type CoreMethod =
   | "UpdateEssayProcessor"
   | "GetEssayProcessor"
   | "ReceiveAssetNotices"
-  | "GetEssayReport";
+  | "GetEssayReport"
+  | "ListMicroContents"
+  | "GetMicroContent"
+  | "CreateMicroContent"
+  | "UpdateMicroContent"
+  | "DeleteMicroContent"
+  | "PublishMicroContent"
+  | "SaveMicroContentQuestions"
+  | "CreateMicroContentUpload"
+  | "ConfirmMicroContentUpload"
+  | "GetMicroContentVideoUrl"
+  | "RequestMicroContentScript"
+  | "SaveMicroContentScript"
+  | "RequestMicroContentRender"
+  | "ReportMicroContentProgress"
+  | "SubmitMicroContent"
+  | "GetMicroContentResult"
+  | "ListMicroContentAttempts";
 
 type JsonResponse = { json?: string };
 
@@ -289,4 +306,38 @@ export const coreApi = {
     body: { submissionId: string; userSub: string },
     claims: BffClaims,
   ) => callCore<TResponse>("GetEssayReport", body, claims),
+  listMicroContents: <TResponse = unknown>(courseId: string, claims: BffClaims) =>
+    callCore<TResponse>("ListMicroContents", { courseId }, claims),
+  getMicroContent: <TResponse = unknown>(microContentId: string, claims: BffClaims) =>
+    callCore<TResponse>("GetMicroContent", { microContentId }, claims),
+  createMicroContent: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
+    callCore<TResponse>("CreateMicroContent", body, claims),
+  updateMicroContent: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
+    callCore<TResponse>("UpdateMicroContent", body, claims),
+  deleteMicroContent: <TResponse = unknown>(microContentId: string, claims: BffClaims) =>
+    callCore<TResponse>("DeleteMicroContent", { microContentId }, claims),
+  publishMicroContent: <TResponse = unknown>(microContentId: string, claims: BffClaims) =>
+    callCore<TResponse>("PublishMicroContent", { microContentId }, claims),
+  saveMicroContentQuestions: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
+    callCore<TResponse>("SaveMicroContentQuestions", body, claims),
+  createMicroContentUpload: <TResponse = unknown>(microContentId: string, filename: string, claims: BffClaims) =>
+    callCore<TResponse>("CreateMicroContentUpload", { microContentId, filename }, claims),
+  confirmMicroContentUpload: <TResponse = unknown>(microContentId: string, claims: BffClaims) =>
+    callCore<TResponse>("ConfirmMicroContentUpload", { microContentId }, claims),
+  getMicroContentVideoUrl: <TResponse = unknown>(microContentId: string, claims: BffClaims) =>
+    callCore<TResponse>("GetMicroContentVideoUrl", { microContentId }, claims),
+  requestMicroContentScript: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
+    callCore<TResponse>("RequestMicroContentScript", body, claims),
+  saveMicroContentScript: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
+    callCore<TResponse>("SaveMicroContentScript", body, claims),
+  requestMicroContentRender: <TResponse = unknown>(microContentId: string, claims: BffClaims) =>
+    callCore<TResponse>("RequestMicroContentRender", { microContentId }, claims),
+  reportMicroContentProgress: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
+    callCore<TResponse>("ReportMicroContentProgress", body, claims),
+  submitMicroContent: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
+    callCore<TResponse>("SubmitMicroContent", body, claims),
+  getMicroContentResult: <TResponse = unknown>(attemptId: string, claims: BffClaims) =>
+    callCore<TResponse>("GetMicroContentResult", { attemptId }, claims),
+  listMicroContentAttempts: <TResponse = unknown>(microContentId: string, claims: BffClaims) =>
+    callCore<TResponse>("ListMicroContentAttempts", { microContentId }, claims),
 };
