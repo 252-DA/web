@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { CoreApiError, claimsFromSession, coreApi } from "@/lib/core-api";
 import { isActiveRequest } from "@/lib/quiz";
+import { isQuestionType } from "@/lib/question-types";
 import { readSessionFromRequest } from "@/lib/route-session";
 
 type LearningOutcome = { lo_id: string; code: string; bloom_level: number };
@@ -105,6 +106,10 @@ export async function POST(request: NextRequest) {
   if (typeof count !== "number" || !Number.isInteger(count) || count < 1 || count > 10) {
     return NextResponse.json({ error: "Số câu hỏi phải từ 1 đến 10." }, { status: 400 });
   }
+  const questionType = payload.questionType ?? "MCQ_SINGLE";
+  if (!isQuestionType(questionType)) {
+    return NextResponse.json({ error: "Kiểu câu hỏi không hợp lệ." }, { status: 400 });
+  }
 
   const claims = claimsFromSession(active.session);
   try {
@@ -147,6 +152,7 @@ export async function POST(request: NextRequest) {
           count,
           style: "quiz",
           bloom_level: bloom,
+          question_type: questionType,
         },
       },
       claims,

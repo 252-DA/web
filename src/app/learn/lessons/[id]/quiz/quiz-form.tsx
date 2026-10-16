@@ -1,7 +1,9 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
-import { answerKey, quizChoices } from "@/lib/quiz";
+import { FormEvent, useState } from "react";
+import { AnswerInput } from "@/components/answer-input";
+import { AnswerReview } from "@/components/answer-review";
+import { isAnswered } from "@/lib/question-types";
 
 type QuizItem = {
   quiz_id: string;
@@ -13,6 +15,10 @@ type QuizItem = {
 type QuizResultItem = {
   quizId: string;
   isCorrect: boolean;
+  /** 0–100; tự luận chấm theo ý nên có điểm lẻ. */
+  score?: number;
+  /** Tự luận chờ AI chấm: chưa có điểm thật. */
+  pending?: boolean;
   feedback: string | null;
   correctAnswer: unknown;
 };
@@ -22,10 +28,15 @@ type QuizResult = {
   totalCorrect: number;
   total: number;
   perItem: QuizResultItem[];
+  /** Số câu tự luận đang chờ AI chấm. */
+  pendingCount?: number;
   /** Luôn false: điểm được đẩy lên LMS bất đồng bộ sau khi chấm. */
   agsPublished: boolean;
-  /** PENDING = đã xếp hàng đẩy về sổ điểm; NOT_REQUIRED = launch không gắn line item. */
-  agsStatus: "PENDING" | "NOT_REQUIRED";
+  /**
+   * PENDING = đã xếp hàng đẩy về sổ điểm; AWAITING_GRADE = chờ chấm tự luận
+   * xong mới đẩy; NOT_REQUIRED = launch không gắn line item.
+   */
+  agsStatus: "PENDING" | "AWAITING_GRADE" | "NOT_REQUIRED";
   /** Chỉ quiz set: Canvas giữ điểm cao nhất trong các lượt nộp. */
   bestScore?: number;
   attemptCount?: number;
@@ -67,9 +78,8 @@ export function QuizForm({
   const [busy, setBusy] = useState(false);
 
   const current = quizItems[currentIndex];
-  const currentChoices = useMemo(() => quizChoices(current?.options), [current]);
-  const answeredCount = quizItems.filter((item) => Object.hasOwn(answers, item.quiz_id)).length;
-  const hasCurrentAnswer = current ? Object.hasOwn(answers, current.quiz_id) : false;
+  const answeredCount = quizItems.filter((item) => isAnswered(item.type, answers[item.quiz_id])).length;
+  const hasCurrentAnswer = current ? isAnswered(current.type, answers[current.quiz_id]) : false;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -126,6 +136,11 @@ export function QuizForm({
               <div>
                 <p className="text-4xl font-bold tabular-nums">{result.score}/100</p>
                 <p className="mt-1 text-sm font-medium">Đúng {result.totalCorrect}/{result.total} câu</p>
+                {(result.pendingCount ?? 0) > 0 && (
+                  <p className="mt-1 text-sm font-medium">
+                    {result.pendingCount} câu tự luận đang được AI chấm, điểm trên chưa tính câu đó.
+                  </p>
+                )}
                 {result.bestScore !== undefined && (result.attemptCount ?? 1) > 1 && (
                   <p className="mt-1 text-sm font-medium">
                     Lượt thứ {result.attemptCount} · Canvas ghi điểm cao nhất: {result.bestScore}/100
@@ -137,41 +152,36 @@ export function QuizForm({
               </button>
             </div>
           </div>
-          <p className="p-4 text-sm text-slate-600">Xem lại từng câu, đáp án đúng và giải thích bên dưới.{result.agsStatus === "PENDING" && " Điểm đã được xếp hàng gửi về sổ điểm Canvas."}</p>
+          <p className="p-4 text-sm text-slate-600">
+            Xem lại từng câu, đáp án đúng và giải thích bên dưới.
+            {result.agsStatus === "PENDING" && " Điểm đã được xếp hàng gửi về sổ điểm Canvas."}
+            {result.agsStatus === "AWAITING_GRADE" && " Điểm sẽ gửi về sổ điểm Canvas khi AI chấm xong tự luận."}
+          </p>
         </section>
 
         {quizItems.map((item, index) => {
           const itemResult = resultByQuiz.get(item.quiz_id);
-          const choices = quizChoices(item.options);
-          const chosen = answers[item.quiz_id];
-          const correct = itemResult?.correctAnswer;
+          const badge = itemResult?.pending
+            ? ["AI đang chấm", "bg-violet-100 text-violet-800"]
+            : itemResult?.isCorrect
+              ? ["Đúng", "bg-emerald-100 text-emerald-800"]
+              : ["Chưa đúng", "bg-red-100 text-red-800"];
           return (
             <article key={item.quiz_id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Câu {index + 1}</p>
-                <span className={itemResult?.isCorrect ? "rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-800" : "rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-800"}>
-                  {itemResult?.isCorrect ? "Đúng" : "Chưa đúng"}
-                </span>
+                <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${badge[1]}`}>{badge[0]}</span>
               </div>
               <h2 className="mt-3 font-semibold leading-7">{item.question}</h2>
-              <div className="mt-4 grid gap-2">
-                {choices.map((choice, choiceIndex) => {
-                  const isChosen = answerKey(choice.value) === answerKey(chosen);
-                  const isCorrect = answerKey(choice.value) === answerKey(correct);
-                  const className = isCorrect
-                    ? "border-emerald-300 bg-emerald-50 text-emerald-950"
-                    : isChosen
-                      ? "border-red-300 bg-red-50 text-red-950"
-                      : "border-slate-200 bg-white text-slate-600";
-                  return (
-                    <div key={`${choice.key}-${choiceIndex}`} className={`flex items-center gap-3 rounded-xl border p-3 text-sm ${className}`}>
-                      <span className="font-semibold">{String.fromCharCode(65 + choiceIndex)}</span>
-                      <span className="flex-1">{choice.label}</span>
-                      {isCorrect && <span className="text-xs font-semibold">Đáp án đúng</span>}
-                      {isChosen && !isCorrect && <span className="text-xs font-semibold">Bạn chọn</span>}
-                    </div>
-                  );
-                })}
+              <div className="mt-4">
+                <AnswerReview
+                  type={item.type}
+                  options={item.options}
+                  correctAnswer={itemResult?.correctAnswer}
+                  chosen={answers[item.quiz_id] ?? null}
+                  score={itemResult?.score}
+                  gradingStatus={itemResult?.pending ? "PENDING" : "GRADED"}
+                />
               </div>
               <div className="mt-4 rounded-xl bg-slate-50 p-4 text-sm leading-6 text-slate-700">
                 <span className="font-semibold text-slate-900">Giải thích: </span>
@@ -209,30 +219,14 @@ export function QuizForm({
 
         <fieldset className="mt-6">
           <legend className="text-lg font-semibold leading-8 text-slate-950">{current.question}</legend>
-          <div className="mt-5 grid gap-3">
-            {currentChoices.map((choice, optionIndex) => {
-              const selected = answerKey(answers[current.quiz_id]) === answerKey(choice.value);
-              return (
-                <label
-                  key={`${choice.key}-${optionIndex}`}
-                  className={
-                    selected
-                      ? "flex cursor-pointer gap-3 rounded-xl border border-sky-500 bg-sky-50 p-4 text-sm text-sky-950 ring-2 ring-sky-100"
-                      : "flex cursor-pointer gap-3 rounded-xl border border-slate-200 p-4 text-sm text-slate-700 transition hover:border-slate-400"
-                  }
-                >
-                  <input
-                    type="radio"
-                    name={current.quiz_id}
-                    checked={selected}
-                    onChange={() => setAnswers((value) => ({ ...value, [current.quiz_id]: choice.value }))}
-                    className="mt-0.5"
-                  />
-                  <span className="font-semibold text-slate-400">{String.fromCharCode(65 + optionIndex)}</span>
-                  <span>{choice.label}</span>
-                </label>
-              );
-            })}
+          <div className="mt-5">
+            <AnswerInput
+              key={current.quiz_id}
+              item={current}
+              value={answers[current.quiz_id]}
+              onChange={(next) => setAnswers((value) => ({ ...value, [current.quiz_id]: next }))}
+              roomy
+            />
           </div>
         </fieldset>
       </section>

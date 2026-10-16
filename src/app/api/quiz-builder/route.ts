@@ -3,7 +3,8 @@ import { CoreApiError, coreApi, claimsFromSession } from "@/lib/core-api";
 import { readManageSession } from "@/lib/session";
 import { LTI_CONFIG } from "@/lib/lti";
 import type { QuizBuilderContext } from "@/lib/canvas-quiz";
-import { answerKey, isActiveRequest, quizChoices, type ContentGenerationRequest } from "@/lib/quiz";
+import { isActiveRequest, type ContentGenerationRequest } from "@/lib/quiz";
+import { hasValidAnswer, isQuestionType } from "@/lib/question-types";
 
 /** Trang Soạn đề: ma trận LO × Bloom, tài liệu nguồn tự chọn, lưu đề nhiều chương. */
 
@@ -54,10 +55,6 @@ async function load(courseId: string, claims: Awaited<ReturnType<typeof access>>
   };
 }
 
-function hasValidAnswer(quiz: { options: unknown; correct_answer: unknown }) {
-  return quizChoices(quiz.options).some((c) => answerKey(c.value) === answerKey(quiz.correct_answer));
-}
-
 export async function GET(request: NextRequest) {
   try {
     const { courseId, claims } = await access(request);
@@ -84,6 +81,8 @@ export async function POST(request: NextRequest) {
       if (!cells.length || cells.length > MAX_CELLS || total > MAX_QUESTIONS)
         throw new BuilderError(`Ma trận cần 1–${MAX_CELLS} ô và tối đa ${MAX_QUESTIONS} câu mỗi lần sinh.`);
       if (!documentIds.length) throw new BuilderError("Chọn ít nhất một tài liệu nguồn.");
+      const questionType = body.questionType ?? "MCQ_SINGLE";
+      if (!isQuestionType(questionType)) throw new BuilderError("Kiểu câu hỏi không hợp lệ.");
       const context = await load(courseId, claims, []);
       if (context.requests.some((r) => isActiveRequest(r)))
         throw new BuilderError("Đợt sinh trước chưa xong. Chờ xong rồi sinh tiếp.", 409);
@@ -107,6 +106,7 @@ export async function POST(request: NextRequest) {
                 bloom_level: BLOOM[cell.bloom_level],
                 count: Number(cell.count),
                 style: "quiz",
+                question_type: questionType,
                 source_document_ids: documentIds,
                 origin: ORIGIN,
               },
@@ -160,25 +160,13 @@ export async function POST(request: NextRequest) {
     if (body.action === "reject")
       return NextResponse.json(await coreApi.rejectQuizItem(quiz.quiz_id, "Loại khi soạn đề", claims));
     if (body.action === "edit") {
+      // Đáp án được core-api kiểm tra theo kiểu thật của câu (quiz/question-types.ts).
       const question = typeof body.question === "string" ? body.question.trim() : "";
-      const options: string[] = Array.isArray(body.options)
-        ? body.options.map((o: unknown) => (typeof o === "string" ? o.trim() : ""))
-        : [];
-      if (
-        !question ||
-        options.length !== 4 ||
-        options.some((o) => !o) ||
-        new Set(options.map((o) => o.toLowerCase())).size !== 4 ||
-        !Number.isInteger(body.correctIndex) ||
-        body.correctIndex < 0 ||
-        body.correctIndex > 3 ||
-        typeof body.explanation !== "string"
-      )
-        throw new BuilderError("Nhập câu hỏi, bốn phương án khác nhau và đáp án đúng.");
+      if (!question || typeof body.explanation !== "string") throw new BuilderError("Nhập câu hỏi và giải thích.");
       return NextResponse.json(
         await coreApi.updateQuizItem(
           quiz.quiz_id,
-          { question, options, correct_answer: options[body.correctIndex], explanation: body.explanation.trim() },
+          { question, options: body.options, correct_answer: body.correct_answer, explanation: body.explanation.trim() },
           claims,
         ),
       );

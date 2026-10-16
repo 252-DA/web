@@ -1,17 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createPublicKey, createVerify, randomUUID } from "crypto";
-import {
-  createRemoteJWKSet,
-  decodeJwt,
-  decodeProtectedHeader,
-  jwtVerify,
-  type JWTPayload,
-} from "jose";
+import { randomUUID } from "crypto";
+import { verifyPlatformJwt } from "@/lib/lti-platform-jwt";
 import { redis } from "@/lib/redis";
 import { LTI_CONFIG } from "@/lib/lti";
 import { LtiSession, SESSION_TTL, sessionKey } from "@/lib/session";
 import { coreApi, CoreApiError } from "@/lib/core-api";
 import { deepLinkSettings, deepLinkKey, LTI_CLAIM, type DeepLinkState } from "@/lib/lti-deep-link";
+import {
+  acceptsAssetProcessor,
+  assetProcessorKey,
+  assetProcessorSettings,
+  PROCESSOR_CUSTOM_KEY,
+  type AssetProcessorFlow,
+} from "@/lib/lti-asset-processor";
 
 const CUSTOM_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/custom";
 const CONTEXT_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/context";
@@ -20,16 +21,6 @@ const RESOURCE_LINK_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/resource_
 const AGS_CLAIM = "https://purl.imsglobal.org/spec/lti-ags/claim/endpoint";
 const ROLES_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/roles";
 type CookieSameSite = "lax" | "strict" | "none";
-type Jwk = {
-  kty?: string;
-  kid?: string;
-  n?: string;
-  e?: string;
-  [key: string]: unknown;
-};
-type Jwks = {
-  keys?: Jwk[];
-};
 type LaunchSyncResponse = {
   internalUserId: string;
   internalCourseId: string;
@@ -136,111 +127,6 @@ function shouldUseQuerySessionFallback(sameSite: CookieSameSite, secure: boolean
   );
 }
 
-function isWeakRsaKeyError(error: unknown): boolean {
-  return errorMessage(error).includes("modulusLength to be 2048 bits or larger");
-}
-
-function allowWeakRsaVerification(): boolean {
-  return (
-    process.env.NODE_ENV !== "production" ||
-    process.env.LTI_ALLOW_WEAK_RSA_VERIFICATION === "true"
-  );
-}
-
-function assertPlatformClaims(payload: JWTPayload): void {
-  if (payload.iss !== LTI_CONFIG.issuer) {
-    throw new Error(`Unexpected LTI issuer: ${String(payload.iss || "")}`);
-  }
-
-  const audiences = Array.isArray(payload.aud)
-    ? payload.aud.map(String)
-    : typeof payload.aud === "string"
-      ? [payload.aud]
-      : [];
-  if (!audiences.includes(LTI_CONFIG.clientId)) {
-    throw new Error("Unexpected LTI audience");
-  }
-
-  const now = Math.floor(Date.now() / 1000);
-  if (payload.exp !== undefined && now >= Number(payload.exp)) {
-    throw new Error("LTI id_token is expired");
-  }
-  if (payload.nbf !== undefined && now < Number(payload.nbf)) {
-    throw new Error("LTI id_token is not active yet");
-  }
-}
-
-async function fetchPlatformJwks(): Promise<Jwks> {
-  const response = await fetch(LTI_CONFIG.jwksUrl, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch platform JWKS: HTTP ${response.status}`);
-  }
-  const jwks = (await response.json()) as Jwks;
-  if (!Array.isArray(jwks.keys)) {
-    throw new Error("Platform JWKS is missing keys");
-  }
-  return jwks;
-}
-
-async function verifyWeakRsaPlatformJwt(idToken: string): Promise<JWTPayload> {
-  const header = decodeProtectedHeader(idToken);
-  if (header.alg !== "RS256") {
-    throw new Error(`Unsupported LTI id_token alg: ${String(header.alg || "")}`);
-  }
-
-  const jwks = await fetchPlatformJwks();
-  const jwk = jwks.keys?.find(
-    (key) =>
-      key.kty === "RSA" &&
-      key.n &&
-      key.e &&
-      (!header.kid || key.kid === header.kid)
-  );
-  if (!jwk) {
-    throw new Error("No matching RSA key found in platform JWKS");
-  }
-
-  const parts = idToken.split(".");
-  if (parts.length !== 3) {
-    throw new Error("Invalid LTI id_token format");
-  }
-
-  const verifier = createVerify("RSA-SHA256");
-  verifier.update(`${parts[0]}.${parts[1]}`);
-  verifier.end();
-
-  const publicKey = createPublicKey({ key: jwk, format: "jwk" });
-  const valid = verifier.verify(publicKey, Buffer.from(parts[2], "base64url"));
-  if (!valid) {
-    throw new Error("Invalid LTI id_token signature");
-  }
-
-  const payload = decodeJwt(idToken);
-  assertPlatformClaims(payload);
-  return payload;
-}
-
-async function verifyPlatformJwt(idToken: string): Promise<JWTPayload> {
-  const platformJwks = createRemoteJWKSet(new URL(LTI_CONFIG.jwksUrl));
-
-  try {
-    const { payload } = await jwtVerify(idToken, platformJwks, {
-      issuer: LTI_CONFIG.issuer,
-      audience: LTI_CONFIG.clientId,
-    });
-    return payload;
-  } catch (error: unknown) {
-    if (!isWeakRsaKeyError(error) || !allowWeakRsaVerification()) {
-      throw error;
-    }
-
-    console.warn(
-      "[lti/launch] platform JWKS uses a weak RSA key; using development-only verifier"
-    );
-    return verifyWeakRsaPlatformJwt(idToken);
-  }
-}
-
 /**
  * LTI Launch handler
  *
@@ -343,11 +229,25 @@ export async function POST(request: NextRequest) {
     const roles = parseRoles(payload[ROLES_CLAIM]);
     const mappedRole = mapRoles(roles);
     const messageType = payload[`${LTI_CLAIM}message_type`];
-    if (messageType !== "LtiResourceLinkRequest" && messageType !== "LtiDeepLinkingRequest") throw new Error("Unsupported LTI message type");
+    // Hai kiểu sau thuộc Asset Processor (chấm bài luận nộp file): giảng viên
+    // bấm "Modify" bộ chấm, hoặc ai đó bấm "View report" trong SpeedGrader.
+    const isProcessorSettings = messageType === "LtiAssetProcessorSettingsRequest";
+    const isReportReview = messageType === "LtiReportReviewRequest";
+    if (
+      messageType !== "LtiResourceLinkRequest" &&
+      messageType !== "LtiDeepLinkingRequest" &&
+      !isProcessorSettings &&
+      !isReportReview
+    )
+      throw new Error("Unsupported LTI message type");
     if (payload[`${LTI_CLAIM}version`] !== "1.3.0") throw new Error("Unsupported LTI version");
     const isDeepLink = messageType === "LtiDeepLinkingRequest";
-    if (isDeepLink && !["instructor", "ta"].includes(mappedRole.courseRole)) throw new CoreApiError(403, "Chỉ giảng viên được thêm quiz vào Canvas.");
-    const linking = isDeepLink ? deepLinkSettings(payload, LTI_CONFIG.platformUrl) : null;
+    if ((isDeepLink || isProcessorSettings) && !["instructor", "ta"].includes(mappedRole.courseRole)) throw new CoreApiError(403, "Chỉ giảng viên được thêm quiz vào Canvas.");
+    const processorLinking =
+      isDeepLink && acceptsAssetProcessor(payload)
+        ? assetProcessorSettings(payload, LTI_CONFIG.platformUrl)
+        : null;
+    const linking = isDeepLink && !processorLinking ? deepLinkSettings(payload, LTI_CONFIG.platformUrl) : null;
 
     // Context (course) info — from id_token or from XBlock fallback
     const context = (payload[CONTEXT_CLAIM] || {}) as Record<string, unknown>;
@@ -411,10 +311,14 @@ export async function POST(request: NextRequest) {
     };
 
     const sid = randomUUID();
-    const flowId = linking ? randomUUID() : undefined;
+    const flowId = linking || processorLinking ? randomUUID() : undefined;
     if (linking && flowId) {
       const flow: DeepLinkState = { ...linking, userId: session.internalUserId, courseId: session.courseId, selectionId: randomUUID() };
       await redis.setex(deepLinkKey(flowId), SESSION_TTL, JSON.stringify(flow));
+    }
+    if (processorLinking && flowId) {
+      const flow: AssetProcessorFlow = { ...processorLinking, userId: session.internalUserId, courseId: session.courseId };
+      await redis.setex(assetProcessorKey(flowId), SESSION_TTL, JSON.stringify(flow));
     }
     await redis.setex(
       sessionKey(sid),
@@ -425,8 +329,15 @@ export async function POST(request: NextRequest) {
     // ── Set session cookie ──
     const sameSite = ltiCookieSameSite();
     const secure = ltiCookieSecure(sameSite);
+    const submissionClaim = (payload[`${LTI_CLAIM}submission`] || {}) as { id?: unknown };
     const redirectPath =
-      isDeepLink
+      processorLinking
+        ? "/lti/asset-processor"
+        : isProcessorSettings
+          ? `/lti/asset-processor?processor=${encodeURIComponent(custom[PROCESSOR_CUSTOM_KEY] || "")}`
+          : isReportReview
+            ? `/lti/essay-report?submission=${encodeURIComponent(String(submissionClaim.id || ""))}`
+            : isDeepLink
         ? "/lti/deep-link"
         : targetKind === "quiz_set" && targetId
           ? `/learn/quizzes/${targetId}`

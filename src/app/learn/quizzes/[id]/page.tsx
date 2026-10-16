@@ -6,7 +6,7 @@ import {
   type QuizSetSettings,
   type StaffQuizResults,
 } from "@/lib/canvas-quiz";
-import { answerKey, quizChoices } from "@/lib/quiz";
+import { AnswerReview } from "@/components/answer-review";
 import { QuizForm } from "../../lessons/[id]/quiz/quiz-form";
 import { ExamPanel } from "./exam-panel";
 import { QuizReport } from "./quiz-report";
@@ -177,41 +177,34 @@ function ExamReview({ review }: { review: NonNullable<LearnerQuizResults["review
     <section className="space-y-3">
       <h2 className="font-semibold">Bài làm lần gần nhất</h2>
       {review.map((item, index) => {
-        const correct = answerKey(item.correct_answer);
-        const chosen = item.chosen === null ? null : answerKey(item.chosen);
+        const blank = item.chosen === null || (typeof item.chosen === "string" && !item.chosen.trim());
+        const badge =
+          item.grading_status === "PENDING"
+            ? ["AI đang chấm", "bg-violet-100 text-violet-800"]
+            : item.grading_status === "NEEDS_REVIEW"
+              ? ["Chờ giảng viên chấm", "bg-amber-100 text-amber-900"]
+              : item.type === "SHORT_ANSWER" && !blank
+                ? [`${Math.round(item.score)}/100`, item.score >= 50 ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"]
+                : item.is_correct
+                  ? ["Đúng", "bg-emerald-100 text-emerald-800"]
+                  : [blank ? "Bỏ trống" : "Chưa đúng", "bg-red-100 text-red-800"];
         return (
           <article key={item.quiz_id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Câu {index + 1}</p>
-              <span
-                className={
-                  item.is_correct
-                    ? "rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-800"
-                    : "rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-800"
-                }
-              >
-                {item.is_correct ? "Đúng" : chosen === null ? "Bỏ trống" : "Chưa đúng"}
-              </span>
+              <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${badge[1]}`}>{badge[0]}</span>
             </div>
             <p className="mt-2 font-semibold leading-7">{item.question}</p>
-            <div className="mt-3 grid gap-2">
-              {quizChoices(item.options).map((c, i) => {
-                const key = answerKey(c.value);
-                const tone =
-                  key === correct
-                    ? "border-emerald-300 bg-emerald-50 text-emerald-950"
-                    : key === chosen
-                      ? "border-red-300 bg-red-50 text-red-950"
-                      : "border-slate-200 text-slate-600";
-                return (
-                  <div key={`${c.key}-${i}`} className={`flex gap-3 rounded-xl border p-3 text-sm ${tone}`}>
-                    <span className="font-semibold">{String.fromCharCode(65 + i)}</span>
-                    <span className="flex-1">{c.label}</span>
-                    {key === correct && <span className="text-xs font-semibold">Đáp án đúng</span>}
-                    {key === chosen && key !== correct && <span className="text-xs font-semibold">Bạn chọn</span>}
-                  </div>
-                );
-              })}
+            <div className="mt-3">
+              <AnswerReview
+                type={item.type}
+                options={item.options}
+                correctAnswer={item.correct_answer}
+                chosen={item.chosen}
+                score={item.score}
+                feedback={item.type === "SHORT_ANSWER" ? item.feedback : null}
+                gradingStatus={item.grading_status}
+              />
             </div>
             {item.explanation && (
               <p className="mt-3 rounded-xl bg-slate-50 p-3 text-sm leading-6 text-slate-700">

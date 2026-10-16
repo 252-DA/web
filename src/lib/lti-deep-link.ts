@@ -142,6 +142,17 @@ export async function signDeepLinkResponse(
         },
       ]
     : [];
+  return signContentItems(state, items, key);
+}
+
+/** LtiDeepLinkingResponse ký bằng key của tool; `items` rỗng = giảng viên huỷ. */
+export async function signContentItems(
+  state: Pick<DeepLinkState, "deploymentId" | "data">,
+  items: unknown[],
+  key?: Awaited<ReturnType<typeof importPKCS8>>,
+) {
+  const signingKey =
+    key ?? (await importPKCS8(await readFile(LTI_CONFIG.privateKeyPath, "utf8"), "RS256"));
   return new SignJWT({
     [`${LTI_CLAIM}message_type`]: "LtiDeepLinkingResponse",
     [`${LTI_CLAIM}version`]: "1.3.0",
@@ -156,7 +167,7 @@ export async function signDeepLinkResponse(
     .setIssuedAt()
     .setExpirationTime("5m")
     .setJti(randomUUID())
-    .sign(key);
+    .sign(signingKey);
 }
 
 function escapeHtml(value: string) {
@@ -169,10 +180,14 @@ function escapeHtml(value: string) {
   );
 }
 
-export function deepLinkForm(returnUrl: string, jwt: string): Response {
+export function deepLinkForm(
+  returnUrl: string,
+  jwt: string,
+  message = "Đang thêm quiz vào Canvas…",
+): Response {
   const nonce = randomUUID();
   return new Response(
-    `<!doctype html><html lang="vi"><meta charset="utf-8"><title>Trở về Canvas</title><body><p>Đang thêm quiz vào Canvas…</p><form id="return" method="post" action="${escapeHtml(returnUrl)}"><input type="hidden" name="JWT" value="${escapeHtml(jwt)}"><button type="submit">Tiếp tục về Canvas</button></form><script nonce="${nonce}">document.getElementById("return").submit()</script></body></html>`,
+    `<!doctype html><html lang="vi"><meta charset="utf-8"><title>Trở về Canvas</title><body><p>${escapeHtml(message)}</p><form id="return" method="post" action="${escapeHtml(returnUrl)}"><input type="hidden" name="JWT" value="${escapeHtml(jwt)}"><button type="submit">Tiếp tục về Canvas</button></form><script nonce="${nonce}">document.getElementById("return").submit()</script></body></html>`,
     {
       headers: {
         "Content-Type": "text/html; charset=utf-8",

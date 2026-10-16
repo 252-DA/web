@@ -1,7 +1,8 @@
 import { readManageSession } from "@/lib/session";
 import { coreApi, claimsFromSession } from "@/lib/core-api";
 import { InstructorNav } from "@/components/instructor-nav";
-import { answerKey, quizChoices } from "@/lib/quiz";
+import { QuestionEditFields } from "@/components/question-edit-fields";
+import { questionTypeLabel } from "@/lib/question-types";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -75,7 +76,7 @@ export default async function LessonEditPage({ params, searchParams }: Props) {
               </button>
             </form>
           </div>
-          <InstructorNav active="review" courseId={session.courseId} sid={sid} />
+          <InstructorNav active="review" courseId={session.courseId} sid={sid} isAdmin={session.role === "administrator"} />
         </div>
       </header>
 
@@ -114,8 +115,7 @@ export default async function LessonEditPage({ params, searchParams }: Props) {
               >
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{quiz.type}</p>
-                    <p className="mt-1 text-xs text-slate-500">Chọn radio bên cạnh phương án đúng.</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{questionTypeLabel(quiz.type)}</p>
                   </div>
                   <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-xs font-semibold">{quiz.status}</span>
                 </div>
@@ -128,33 +128,10 @@ export default async function LessonEditPage({ params, searchParams }: Props) {
                     className="min-h-24 rounded-lg border border-slate-300 p-3 leading-6 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
                   />
                 </label>
-                <fieldset className="grid gap-2">
-                  <legend className="mb-1 text-sm font-medium">Các lựa chọn</legend>
-                  {Array.from({ length: 4 }, (_, index) => {
-                    const choices = quizChoices(quiz.options);
-                    const choice = choices[index];
-                    const checked = choice ? answerKey(choice.value) === answerKey(quiz.correct_answer) : false;
-                    return (
-                      <label key={index} className="grid grid-cols-[auto_auto_1fr] items-center gap-3 rounded-lg border border-slate-200 p-3 text-sm">
-                        <input
-                          type="radio"
-                          name="correct_index"
-                          value={index}
-                          required
-                          defaultChecked={checked}
-                          aria-label={`Đặt lựa chọn ${index + 1} làm đáp án đúng`}
-                        />
-                        <span className="font-semibold text-slate-400">{String.fromCharCode(65 + index)}</span>
-                        <input
-                          name={`option_${index}`}
-                          required
-                          defaultValue={choice?.label || ""}
-                          className="h-10 min-w-0 rounded-lg border border-slate-300 px-3 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
-                        />
-                      </label>
-                    );
-                  })}
-                </fieldset>
+                <QuestionEditFields
+                  quiz={quiz}
+                  inputClass="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
+                />
                 <label className="grid gap-1.5 text-sm">
                   <span className="font-medium">Giải thích đáp án</span>
                   <textarea

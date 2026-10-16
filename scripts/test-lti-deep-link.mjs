@@ -146,8 +146,77 @@ try {
   const html = await form.text();
   assert.ok(html.includes('name="JWT"'));
   assert.ok(!html.includes('&label="<script>"'));
+
+  // ── Asset Processor (Document Processor): gắn bộ chấm bài luận ──
+  const processorCode = (await compile("../src/lib/lti-asset-processor.ts"))
+    .replace('"./lti"', JSON.stringify(config))
+    .replace('"./lti-deep-link"', JSON.stringify(asModule(code)));
+  const {
+    acceptsAssetProcessor,
+    assetProcessorSettings,
+    signAssetProcessorResponse,
+    noticeHandlerUrl,
+  } = await import(asModule(processorCode));
+  const pnsClaim = `${LTI_CLAIM}platformnotificationservice`;
+  const processorPayload = {
+    [`${LTI_CLAIM}deployment_id`]: "deployment-1",
+    [`${LTI_CLAIM}activity`]: { id: "activity-uuid", title: "Tiểu luận" },
+    [pnsClaim]: {
+      platform_notification_service_url: "https://canvas.test/api/lti/notice-handlers/9",
+      notice_types_supported: ["LtiAssetProcessorSubmissionNotice"],
+    },
+    [`${DL_CLAIM}deep_linking_settings`]: {
+      accept_types: ["ltiAssetProcessor"],
+      deep_link_return_url: "https://canvas.test/courses/3/deep_linking_response",
+    },
+  };
+  assert.equal(acceptsAssetProcessor(processorPayload), true);
+  assert.equal(acceptsAssetProcessor(payload), false);
+  const processorSettings = assetProcessorSettings(processorPayload, "https://canvas.test");
+  assert.equal(processorSettings.pnsUrl, "https://canvas.test/api/lti/notice-handlers/9");
+  assert.equal(processorSettings.activityId, "activity-uuid");
+  assert.equal(processorSettings.activityTitle, "Tiểu luận");
+  assert.throws(
+    () =>
+      assetProcessorSettings(
+        { ...processorPayload, [pnsClaim]: { platform_notification_service_url: "https://evil.test/pns" } },
+        "https://canvas.test",
+      ),
+    /noticehandlers/,
+  );
+  assert.throws(
+    () => assetProcessorSettings({ ...processorPayload, [pnsClaim]: undefined }, "https://canvas.test"),
+    /noticehandlers/,
+  );
+  assert.throws(
+    () =>
+      assetProcessorSettings(
+        {
+          ...processorPayload,
+          [pnsClaim]: { ...processorPayload[pnsClaim], notice_types_supported: ["LtiHelloWorldNotice"] },
+        },
+        "https://canvas.test",
+      ),
+    /không gửi thông báo bài nộp/,
+  );
+  assert.equal(noticeHandlerUrl(), "https://tool.test/api/lti/notices");
+  const { payload: processorResponse } = await jwtVerify(
+    await signAssetProcessorResponse(
+      { ...processorSettings, userId: "user", courseId: "course" },
+      { processor_id: "proc-1", title: "Chấm tiểu luận", max_score: 10, rubric: [{}, {}, {}] },
+    ),
+    publicKey,
+    { issuer: "client-123", audience: "https://canvas.instructure.com" },
+  );
+  const processorItem = processorResponse[`${DL_CLAIM}content_items`][0];
+  assert.equal(processorItem.type, "ltiAssetProcessor");
+  assert.equal(processorItem.custom.da_processor_id, "proc-1");
+  assert.equal(processorItem.report.url, "https://tool.test/lti/essay-report");
+  assert.match(processorItem.text, /3 tiêu chí, tối đa 10 điểm/);
+  assert.ok(processorItem.text.length <= 255);
+
   console.log(
-    "PASS: module context, return-origin validation, signed response, grade item, exam dates/points, cancellation, safe form",
+    "PASS: module context, return-origin validation, signed response, grade item, exam dates/points, cancellation, safe form, asset processor settings/PNS/content item",
   );
 } finally {
   await rm(dir, { recursive: true, force: true });

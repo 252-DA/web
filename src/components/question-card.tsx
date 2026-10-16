@@ -2,7 +2,10 @@
 
 import { useState, type FormEvent } from "react";
 import type { ReviewQuiz } from "@/lib/canvas-quiz";
-import { answerKey, bloomLabel, quizChoices } from "@/lib/quiz";
+import { bloomLabel } from "@/lib/quiz";
+import { questionTypeLabel } from "@/lib/question-types";
+import { AnswerReview } from "./answer-review";
+import { QuestionEditFields } from "./question-edit-fields";
 
 /** Trạng thái câu hỏi trong ngân hàng của DA. */
 export const KEPT = ["APPROVED", "PUBLISHED"];
@@ -209,7 +212,6 @@ function QuestionRow({
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const discarded = quiz.status === DISCARDED;
-  const correctKey = answerKey(quiz.correct_answer);
 
   return (
     <li className={`rounded-lg border ${on ? "border-emerald-400 bg-emerald-50/50" : "border-slate-200 bg-white"}`}>
@@ -231,6 +233,7 @@ function QuestionRow({
             {number && <span className="font-semibold text-slate-500">Câu {number}</span>}
             {loCode && <span className="rounded bg-slate-100 px-1.5 py-0.5 font-medium text-slate-700">{loCode}</span>}
             <span className="text-slate-500">{bloomLabel(quiz.bloom_level)}</span>
+            <span className="rounded bg-violet-50 px-1.5 py-0.5 font-medium text-violet-800">{questionTypeLabel(quiz.type, true)}</span>
             {quiz.status === "GENERATED_DRAFT" && <span className="rounded bg-sky-100 px-1.5 py-0.5 font-medium text-sky-800">Mới</span>}
             {quiz.status === "REVIEWING" && <span className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800">Đã sửa</span>}
             {pending && <span className="text-slate-500">Đang lưu…</span>}
@@ -270,20 +273,7 @@ function QuestionRow({
             />
           ) : (
             <>
-              <div className="grid gap-1.5 sm:grid-cols-2">
-                {quizChoices(quiz.options).map((c, i) => {
-                  const correct = answerKey(c.value) === correctKey;
-                  return (
-                    <p
-                      key={c.key}
-                      className={`rounded-lg border px-3 py-1.5 text-sm ${correct ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-slate-200 text-slate-700"}`}
-                    >
-                      <strong>{String.fromCharCode(65 + i)}.</strong> {c.label}
-                      {correct && <span className="ml-1 text-xs">✓</span>}
-                    </p>
-                  );
-                })}
-              </div>
+              <AnswerReview type={quiz.type} options={quiz.options} correctAnswer={quiz.correct_answer} compact />
               <p className="mt-2 text-sm leading-6 text-slate-600">
                 <span className="text-xs text-slate-500">Giải thích · dựa trên {quiz.source_chunk_ids.length} đoạn slide: </span>
                 {quiz.explanation || "Chưa có giải thích."}
@@ -307,12 +297,6 @@ function QuestionEditForm({
   onSave: (form: FormData) => Promise<void>;
   onCancel: () => void;
 }) {
-  const choices = quizChoices(quiz.options);
-  const correctIndex = Math.max(
-    0,
-    choices.findIndex((c) => answerKey(c.value) === answerKey(quiz.correct_answer)),
-  );
-
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await onSave(new FormData(event.currentTarget));
@@ -324,24 +308,7 @@ function QuestionEditForm({
         Câu hỏi
         <textarea name="question" required className={inputClass} defaultValue={quiz.question} rows={3} />
       </label>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {[0, 1, 2, 3].map((i) => (
-          <label key={i} className="grid gap-1 text-sm">
-            Phương án {String.fromCharCode(65 + i)}
-            <input name={`option_${i}`} required className={inputClass} defaultValue={choices[i]?.label || ""} />
-          </label>
-        ))}
-      </div>
-      <label className="grid gap-1 text-sm">
-        Đáp án đúng
-        <select name="correctIndex" className={`${inputClass} w-32`} defaultValue={correctIndex}>
-          {[0, 1, 2, 3].map((i) => (
-            <option key={i} value={i}>
-              {String.fromCharCode(65 + i)}
-            </option>
-          ))}
-        </select>
-      </label>
+      <QuestionEditFields quiz={quiz} inputClass={inputClass} />
       <label className="grid gap-1 text-sm">
         Giải thích
         <textarea name="explanation" className={inputClass} defaultValue={quiz.explanation || ""} rows={3} />

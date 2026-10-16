@@ -71,7 +71,7 @@ export default async function QuizBuilderPage({ searchParams }: Props) {
               ← Quay lại hộp thoại sinh quiz
             </a>
           ) : (
-            <InstructorNav active="quizzes" courseId={courseId} sid={sid} />
+            <InstructorNav active="quizzes" courseId={courseId} sid={sid} isAdmin={session.role === "administrator"} />
           )}
         </div>
       </header>
