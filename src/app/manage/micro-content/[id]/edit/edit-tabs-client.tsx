@@ -29,7 +29,7 @@ export function EditTabsClient({ microContent, sid, defaultTab = "questions" }: 
               : "border-transparent text-slate-500 hover:text-slate-800"
           }`}
         >
-          <span>📹 Video</span>
+          <span>Video</span>
           <span
             className={`rounded-full px-2 py-0.5 text-xs ${
               microContent.videoStatus === "READY"
@@ -49,7 +49,7 @@ export function EditTabsClient({ microContent, sid, defaultTab = "questions" }: 
               : "border-transparent text-slate-500 hover:text-slate-800"
           }`}
         >
-          <span>📝 Câu hỏi củng cố</span>
+          <span>Câu hỏi củng cố</span>
           <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
             {microContent.questions?.length ?? 0}
           </span>
@@ -63,7 +63,7 @@ export function EditTabsClient({ microContent, sid, defaultTab = "questions" }: 
               : "border-transparent text-slate-500 hover:text-slate-800"
           }`}
         >
-          <span>🚀 Xuất bản & Điều kiện</span>
+          <span>Xuất bản & Điều kiện</span>
         </button>
       </div>
 
