@@ -265,6 +265,19 @@ export async function POST(request: NextRequest) {
     const targetKind = isDeepLink ? undefined : parseTargetKind(custom.target_kind);
     const targetId = isDeepLink ? null : custom.target_id || custom.lesson_id || null;
 
+    // Nút chat ở thanh trên của Canvas (placement top_navigation) hiện ở mọi trang,
+    // kể cả dashboard hay trang tài khoản không thuộc khóa học nào. Chat theo khóa
+    // học, nên không có context thì báo rõ thay vì trả JSON lỗi trong ngăn bên.
+    if (targetKind === "chat" && !lmsContextId) {
+      return new Response(
+        '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+          '<body style="font:14px system-ui,sans-serif;margin:0;padding:24px;color:#334155">' +
+          "<p>Trợ lý hỏi đáp tài liệu chỉ dùng được bên trong một khóa học.</p>" +
+          "<p>Hãy mở một khóa học trong Canvas rồi bấm lại nút này.</p></body>",
+        { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } }
+      );
+    }
+
     const ags = (payload[AGS_CLAIM] || {}) as Record<string, unknown>;
     const agsLineItemUrl = typeof ags.lineitem === "string" ? ags.lineitem : undefined;
 
@@ -339,7 +352,9 @@ export async function POST(request: NextRequest) {
             ? `/lti/essay-report?submission=${encodeURIComponent(String(submissionClaim.id || ""))}`
             : isDeepLink
         ? "/lti/deep-link"
-        : targetKind === "quiz_set" && targetId
+        : targetKind === "chat"
+          ? `/learn/courses/${sync.internalCourseId}/chat?embed=1`
+          : targetKind === "quiz_set" && targetId
           ? `/learn/quizzes/${targetId}`
           : mappedRole.courseRole === "instructor" || mappedRole.courseRole === "ta"
         ? "/manage/dashboard"

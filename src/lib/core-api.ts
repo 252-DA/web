@@ -71,7 +71,12 @@ type CoreMethod =
   | "ReportMicroContentProgress"
   | "SubmitMicroContent"
   | "GetMicroContentResult"
-  | "ListMicroContentAttempts";
+  | "ListMicroContentAttempts"
+  | "GetChatSettings"
+  | "SetChatMode"
+  | "RecordChatRun"
+  | "RateChatRun"
+  | "GetChatStats";
 
 type JsonResponse = { json?: string };
 
@@ -277,7 +282,7 @@ export const coreApi = {
   createContentGenerationRequest: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
     callCore<TResponse>("CreateContentGenerationRequest", body, claims),
   listContentGenerationRequests: <TResponse = unknown>(
-    body: { courseId: string; limit?: number; type?: "card" | "quiz" },
+    body: { courseId: string; limit?: number; type?: "card" | "quiz" | "relations" },
     claims: BffClaims,
   ) => callCore<TResponse>("ListContentGenerationRequests", body, claims),
   // Chọn model AI theo task — chỉ admin; core-api kiểm tra quyền và tên profile.
@@ -287,6 +292,19 @@ export const coreApi = {
     body: { task: string; profile: string | null },
     claims: BffClaims,
   ) => callCore<TResponse>("SetModelBinding", body, claims),
+  // Chatbot ba chế độ truy xuất (docs/chatbot-ba-che-do-ke-hoach.md).
+  getChatSettings: <TResponse = unknown>(claims: BffClaims) =>
+    callCore<TResponse>("GetChatSettings", {}, claims),
+  setChatMode: <TResponse = unknown>(body: { mode: string }, claims: BffClaims) =>
+    callCore<TResponse>("SetChatMode", body, claims),
+  recordChatRun: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
+    callCore<TResponse>("RecordChatRun", body, claims),
+  rateChatRun: <TResponse = unknown>(body: { runId: string; rating: number }, claims: BffClaims) =>
+    callCore<TResponse>("RateChatRun", body, claims),
+  getChatStats: <TResponse = unknown>(
+    body: { courseId?: string; source?: "web" | "eval" },
+    claims: BffClaims,
+  ) => callCore<TResponse>("GetChatStats", body, claims),
   // Chấm bài luận nộp file qua LTI Asset Processor (docs/essay-asset-processor.md).
   createEssayProcessor: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
     callCore<TResponse>("CreateEssayProcessor", body, claims),

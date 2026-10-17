@@ -1,4 +1,4 @@
-type InstructorNavItem = "dashboard" | "curriculum" | "documents" | "quizzes" | "review" | "micro-content" | "learner" | "models";
+type InstructorNavItem = "dashboard" | "curriculum" | "documents" | "quizzes" | "review" | "micro-content" | "learner" | "chat" | "models";
 
 type Props = {
   active: InstructorNavItem;
@@ -24,6 +24,7 @@ export function InstructorNav({ active, courseId, sid, isAdmin }: Props) {
     { key: "quizzes", label: "Soạn đề", href: "/manage/quizzes/new" },
     { key: "review", label: "Quiz & Review", href: "/manage/review" },
     { key: "learner", label: "Learner preview", href: `/learn/courses/${courseId}` },
+    { key: "chat", label: "Chatbot", href: "/manage/chat" },
     ...(isAdmin ? [{ key: "models", label: "Model AI", href: "/manage/models" }] : []),
   ] as const;
 
