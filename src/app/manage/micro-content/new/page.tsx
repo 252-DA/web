@@ -37,7 +37,7 @@ export default async function NewMicroContentPage({ searchParams }: Props) {
       </header>
 
       <section className="mx-auto max-w-4xl px-4 py-6">
-        <CreateMicroContentForm sid={sid} />
+        <CreateMicroContentForm sid={sid ?? ""} />
       </section>
     </main>
   );

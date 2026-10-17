@@ -89,32 +89,31 @@ export async function POST(request: NextRequest) {
       const los = new Map(
         context.chapters.flatMap((c) => c.learningOutcomes.map((lo) => [lo.lo_id, lo] as const)),
       );
-      const created: ContentGenerationRequest[] = [];
+      const scopes: Array<Record<string, unknown>> = [];
       // Mỗi ô LO × Bloom là một yêu cầu: worker sinh và kiểm chứng theo từng LO ở một mức.
       for (const cell of cells) {
         const lo = los.get(cell?.lo_id);
         if (!lo || !BLOOM[cell.bloom_level]) throw new BuilderError("Ô ma trận có LO hoặc mức Bloom không hợp lệ.");
-        created.push(
-          await coreApi.createContentGenerationRequest<ContentGenerationRequest>(
-            {
-              courseId,
-              type: "quiz",
-              scope: {
-                target_kind: "lo",
-                target_code: lo.lo_id,
-                target_label: lo.code,
-                bloom_level: BLOOM[cell.bloom_level],
-                count: Number(cell.count),
-                style: "quiz",
-                question_type: questionType,
-                source_document_ids: documentIds,
-                origin: ORIGIN,
-              },
-            },
-            claims,
-          ),
-        );
+        scopes.push({
+          target_kind: "lo",
+          target_code: lo.lo_id,
+          target_label: lo.code,
+          bloom_level: BLOOM[cell.bloom_level],
+          count: Number(cell.count),
+          style: "quiz",
+          question_type: questionType,
+          source_document_ids: documentIds,
+          origin: ORIGIN,
+        });
       }
+      const created = await coreApi.createContentGenerationRequest<ContentGenerationRequest[]>(
+        {
+          courseId,
+          type: "quiz",
+          scopes,
+        },
+        claims,
+      );
       return NextResponse.json({ requests: created }, { status: 202 });
     }
 
@@ -147,7 +146,10 @@ export async function POST(request: NextRequest) {
         throw new BuilderError("Danh sách câu hỏi không hợp lệ.");
       const invalid = quizzes.filter((q) => !hasValidAnswer(q!));
       if (invalid.length) throw new BuilderError(`${invalid.length} câu có đáp án không khớp lựa chọn. Sửa trước khi giữ.`);
-      for (const q of quizzes) await coreApi.approveQuizItem(q!.quiz_id, claims);
+      await coreApi.approveQuizItems(
+        quizzes.map((q) => q!.quiz_id),
+        claims,
+      );
       return NextResponse.json({ approved: quizzes.length });
     }
 

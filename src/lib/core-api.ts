@@ -263,6 +263,8 @@ export const coreApi = {
     callCore<TResponse>("UpdateCard", { cardId, content }, claims),
   approveQuizItem: <TResponse = unknown>(quizId: string, claims: BffClaims) =>
     callCore<TResponse>("ApproveQuizItem", { quizId }, claims),
+  approveQuizItems: <TResponse = { approved: number }>(quizIds: string[], claims: BffClaims) =>
+    callCore<TResponse>("ApproveQuizItem", { quizIds }, claims),
   rejectQuizItem: <TResponse = unknown>(quizId: string, reason: string, claims: BffClaims) =>
     callCore<TResponse>("RejectQuizItem", { quizId, reason }, claims),
   updateQuizItem: <TResponse = unknown>(quizId: string, data: unknown, claims: BffClaims) =>
