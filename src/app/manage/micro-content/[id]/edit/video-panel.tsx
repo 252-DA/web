@@ -1,7 +1,19 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
+
+interface Scene {
+  title: string;
+  bullets: string[];
+  narration: string;
+}
+
+interface Script {
+  language?: string;
+  topic?: string;
+  scenes: Scene[];
+}
 
 interface Props {
   microContent: {
@@ -10,6 +22,8 @@ interface Props {
     videoStatus: string;
     videoDurationMs: number | null;
     videoError: string | null;
+    aiPrompt?: string | null;
+    aiScript?: Script | null;
   };
   sid: string;
 }
@@ -32,6 +46,26 @@ export function VideoPanel({ microContent, sid }: Props) {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
+  // AI Script states
+  const [prompt, setPrompt] = useState(microContent.aiPrompt || "");
+  const [script, setScript] = useState<Script | null>(
+    microContent.aiScript || null,
+  );
+  const [generatingScript, setGeneratingScript] = useState(false);
+  const [savingScript, setSavingScript] = useState(false);
+  const [renderingVideo, setRenderingVideo] = useState(false);
+  const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
+
+  // Polling when processing video
+  useEffect(() => {
+    if (microContent.videoStatus === "PROCESSING" || microContent.videoStatus === "UPLOADING") {
+      const timer = setInterval(() => {
+        router.refresh();
+      }, 4000);
+      return () => clearInterval(timer);
+    }
+  }, [microContent.videoStatus, router]);
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -46,7 +80,6 @@ export function VideoPanel({ microContent, sid }: Props) {
     setError(null);
 
     try {
-      // Đọc duration từ file qua thẻ video tạm
       let durationMs = 0;
       try {
         const videoElement = document.createElement("video");
@@ -93,6 +126,117 @@ export function VideoPanel({ microContent, sid }: Props) {
     }
   };
 
+  const handleGenerateScript = async () => {
+    if (!prompt.trim()) {
+      setError("Vui lòng nhập chủ đề / nội dung giảng giải.");
+      return;
+    }
+    setGeneratingScript(true);
+    setError(null);
+    setSaveSuccessMessage(null);
+
+    try {
+      const res = await fetch(
+        `/api/micro-content/${microContent.id}/ai?sid=${encodeURIComponent(sid)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "request_script",
+            prompt: prompt.trim(),
+          }),
+        },
+      );
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Sinh kịch bản thất bại.");
+      }
+
+      if (data.script) {
+        setScript(data.script);
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Đã có lỗi khi sinh kịch bản.");
+    } finally {
+      setGeneratingScript(false);
+    }
+  };
+
+  const handleSaveScript = async () => {
+    if (!script || !script.scenes || script.scenes.length === 0) {
+      setError("Kịch bản phải có ít nhất 1 cảnh.");
+      return;
+    }
+    setSavingScript(true);
+    setError(null);
+    setSaveSuccessMessage(null);
+
+    try {
+      const res = await fetch(
+        `/api/micro-content/${microContent.id}/ai?sid=${encodeURIComponent(sid)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "save_script",
+            script,
+          }),
+        },
+      );
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Lưu kịch bản thất bại.");
+      }
+
+      setSaveSuccessMessage("Đã lưu kịch bản thành công.");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Đã có lỗi khi lưu kịch bản.");
+    } finally {
+      setSavingScript(false);
+    }
+  };
+
+  const handleRequestRender = async () => {
+    setRenderingVideo(true);
+    setError(null);
+    setSaveSuccessMessage(null);
+
+    try {
+      const res = await fetch(
+        `/api/micro-content/${microContent.id}/ai?sid=${encodeURIComponent(sid)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "request_render",
+          }),
+        },
+      );
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Yêu cầu render video thất bại.");
+      }
+
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Đã có lỗi khi gửi yêu cầu render.");
+    } finally {
+      setRenderingVideo(false);
+    }
+  };
+
+  const updateScene = (idx: number, updated: Partial<Scene>) => {
+    if (!script) return;
+    const newScenes = [...script.scenes];
+    newScenes[idx] = { ...newScenes[idx], ...updated };
+    setScript({ ...script, scenes: newScenes });
+  };
+
   return (
     <div className="space-y-6">
       {/* Video Preview nếu đã sẵn sàng */}
@@ -134,7 +278,7 @@ export function VideoPanel({ microContent, sid }: Props) {
             {microContent.videoStatus === "READY"
               ? `Đã sẵn sàng (${formatDuration(microContent.videoDurationMs)})`
               : microContent.videoStatus === "PROCESSING"
-              ? "Đang xử lý/render video..."
+              ? "Đang xử lý/render video bằng AI (Vui lòng đợi vài phút)..."
               : microContent.videoStatus === "UPLOADING"
               ? "Đang tải file lên..."
               : microContent.videoStatus === "FAILED"
@@ -172,13 +316,18 @@ export function VideoPanel({ microContent, sid }: Props) {
                 : "text-slate-500 hover:text-slate-700"
             }`}
           >
-            Tạo video bằng AI
+            Tạo video bằng AI (Slide + Giọng đọc)
           </button>
         </div>
 
         {error && (
           <div className="mt-4 rounded-lg bg-rose-50 p-3 text-sm text-rose-700 border border-rose-200">
             {error}
+          </div>
+        )}
+        {saveSuccessMessage && (
+          <div className="mt-4 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700 border border-emerald-200">
+            {saveSuccessMessage}
           </div>
         )}
 
@@ -221,24 +370,114 @@ export function VideoPanel({ microContent, sid }: Props) {
             </div>
           </div>
         ) : (
-          <div className="mt-6 space-y-4">
-            <div>
-              <label className="block text-xs font-semibold uppercase text-slate-500">
-                Chủ đề hoặc nội dung cần giảng giải
+          <div className="mt-6 space-y-6">
+            {/* Nhập prompt sinh kịch bản */}
+            <div className="rounded-lg bg-slate-50 p-4 border border-slate-200 space-y-3">
+              <label className="block text-xs font-bold uppercase tracking-wide text-slate-700">
+                Giai đoạn 1: Chủ đề / Yêu cầu giảng giải
               </label>
               <textarea
-                rows={4}
+                rows={3}
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
                 placeholder="Ví dụ: Giảng giải trực quan thuật toán QuickSort, phân vùng Lomuto và độ phức tạp O(n log n)..."
-                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100"
+                className="w-full rounded-lg border border-slate-300 p-3 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100"
               />
+              <button
+                type="button"
+                onClick={handleGenerateScript}
+                disabled={generatingScript}
+                className="rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white hover:bg-sky-700 disabled:opacity-50"
+              >
+                {generatingScript ? "Đang tạo kịch bản..." : "Tạo / Đặt lại kịch bản"}
+              </button>
             </div>
-            <button
-              type="button"
-              disabled
-              className="rounded-lg bg-slate-200 px-4 py-2 text-xs font-semibold text-slate-500"
-            >
-              Sinh kịch bản bằng AI (Sẽ kích hoạt ở Mốc 5)
-            </button>
+
+            {/* Xem và chỉnh sửa kịch bản */}
+            {script && script.scenes && script.scenes.length > 0 && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
+                    Giai đoạn 2: Xem & Chỉnh sửa kịch bản ({script.scenes.length} cảnh)
+                  </h4>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSaveScript}
+                      disabled={savingScript}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      {savingScript ? "Đang lưu..." : "Lưu kịch bản"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleRequestRender}
+                      disabled={renderingVideo || microContent.videoStatus === "PROCESSING"}
+                      className="rounded-lg bg-emerald-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 shadow-sm"
+                    >
+                      {microContent.videoStatus === "PROCESSING"
+                        ? "Đang render video..."
+                        : "Render Video bằng AI"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  {script.scenes.map((scene, idx) => (
+                    <div
+                      key={idx}
+                      className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm space-y-3"
+                    >
+                      <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                        <span className="text-xs font-bold text-sky-600 uppercase">
+                          Cảnh {idx + 1}
+                        </span>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">
+                          Tiêu đề Slide
+                        </label>
+                        <input
+                          type="text"
+                          value={scene.title}
+                          onChange={(e) => updateScene(idx, { title: e.target.value })}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-sky-500 focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">
+                          Ý chính trên slide (mỗi dòng một ý)
+                        </label>
+                        <textarea
+                          rows={2}
+                          value={scene.bullets?.join("\n") || ""}
+                          onChange={(e) =>
+                            updateScene(idx, {
+                              bullets: e.target.value.split("\n").filter((b) => b.trim()),
+                            })
+                          }
+                          className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-sky-500 focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">
+                          Lời đọc thành tiếng (TTS)
+                        </label>
+                        <textarea
+                          rows={3}
+                          value={scene.narration}
+                          onChange={(e) => updateScene(idx, { narration: e.target.value })}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-sky-500 focus:outline-none font-sans"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
