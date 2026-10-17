@@ -89,7 +89,8 @@ function parseTargetKind(value: string | undefined): LtiSession["targetKind"] | 
     value === "card" ||
     value === "quiz_set" ||
     value === "chat" ||
-    value === "video"
+    value === "video" ||
+    value === "micro_content"
   ) {
     return value;
   }
@@ -341,6 +342,8 @@ export async function POST(request: NextRequest) {
         ? "/lti/deep-link"
         : targetKind === "quiz_set" && targetId
           ? `/learn/quizzes/${targetId}`
+          : targetKind === "micro_content" && targetId
+            ? `/learn/micro-content/${targetId}`
           : mappedRole.courseRole === "instructor" || mappedRole.courseRole === "ta"
         ? "/manage/dashboard"
         : targetKind === "lesson" && targetId

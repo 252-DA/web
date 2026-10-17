@@ -45,6 +45,13 @@ export type CanvasQuizContext = {
   quizSets: SavedQuizSet[];
   documents: Array<{ document_id: string; title: string; status: string }>;
   requests: ContentGenerationRequest[];
+  microContents?: Array<{
+    id: string;
+    title: string;
+    status: string;
+    videoStatus: string;
+    questionCount: number;
+  }>;
 };
 
 /** Trạng thái điểm của sinh viên so với sổ điểm Canvas (xem core-api quiz-set-results.ts). */

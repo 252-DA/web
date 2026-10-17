@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { randomUUID } from "node:crypto";
 import { redis } from "@/lib/redis";
 import { coreApi } from "@/lib/core-api";
-import { deepLinkForm, signDeepLinkResponse } from "@/lib/lti-deep-link";
+import { deepLinkForm, signDeepLinkResponse, signDeepLinkMicroContentResponse } from "@/lib/lti-deep-link";
 import {
   assertToolOrigin,
   deepLinkAccess,
@@ -25,8 +25,22 @@ export async function POST(request: NextRequest) {
     if (existing) return deepLinkForm(active.flow.returnUrl, existing);
     lockKey = `lti:deep-link-lock:${active.flowId}`;
     if (!(await redis.set(lockKey, lockValue, "EX", 180, "NX")))
-      throw new DeepLinkError("Đang thêm quiz. Vui lòng chờ.", 409);
+      throw new DeepLinkError("Đang thêm nội dung. Vui lòng chờ.", 409);
     const form = await request.formData();
+
+    const microContentId = String(form.get("microContentId") || "");
+    if (microContentId && form.get("cancel") !== "true") {
+      const item: any = await coreApi.getMicroContent(microContentId, active.claims);
+      if (!item) throw new DeepLinkError("Micro Content không tồn tại hoặc không thuộc khóa học.");
+      const jwt = await signDeepLinkMicroContentResponse(active.flow, {
+        micro_content_id: item.id,
+        title: item.title,
+        questionCount: item.questions?.length || 0,
+      });
+      await redis.setex(resultKey, 300, jwt);
+      return deepLinkForm(active.flow.returnUrl, jwt, "Đang thêm Micro Content vào Canvas…");
+    }
+
     let quiz: Parameters<typeof signDeepLinkResponse>[1];
     if (form.get("cancel") !== "true") {
       const context = await loadQuizContext(

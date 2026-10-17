@@ -106,6 +106,7 @@ export function QuizComposer({
   const [generating, setGenerating] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const [showReuse, setShowReuse] = useState(false);
+  const [showMicroContent, setShowMicroContent] = useState(false);
   // Yêu cầu đang chạy lúc mở / sau lần tải gần nhất — để biết đợt nào vừa xong.
   const runningIds = useRef<Set<string>>(
     new Set(initial.requests.filter((r) => isActiveRequest(r)).map((r) => r.request_id)),
@@ -331,9 +332,21 @@ export function QuizComposer({
                 // Đề vừa soạn ở tab "Soạn đề nâng cao" chỉ hiện sau khi tải lại.
                 if (!showReuse) refresh().catch((e: Error) => setNotice({ kind: "error", text: e.message }));
                 setShowReuse((v) => !v);
+                setShowMicroContent(false);
               }}
             >
               Dùng lại quiz đã tạo ({data.quizSets.length})
+            </button>
+            <button
+              type="button"
+              className={ghostButton}
+              onClick={() => {
+                if (!showMicroContent) refresh().catch((e: Error) => setNotice({ kind: "error", text: e.message }));
+                setShowMicroContent((v) => !v);
+                setShowReuse(false);
+              }}
+            >
+              Chèn Micro Content ({data.microContents?.length || 0})
             </button>
           </div>
         </div>
@@ -397,6 +410,33 @@ export function QuizComposer({
                       : "Luyện tập"}
                   </span>
                   <button className={ghostButton}>Thêm vào module</button>
+                </form>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {showMicroContent && (!data.microContents || !data.microContents.length) && (
+          <p className="rounded-xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">
+            Chưa có Micro Content nào trong khóa học này. Hãy vào trang Quản lý Micro Content để tạo mới và xuất bản.
+          </p>
+        )}
+        {showMicroContent && data.microContents && data.microContents.length > 0 && (
+          <section className="rounded-xl border border-slate-200 bg-white p-4">
+            <h2 className="text-sm font-semibold">Micro Content của khóa học</h2>
+            <div className="mt-2 divide-y divide-slate-200">
+              {data.microContents.map((mc) => (
+                <form key={mc.id} action={returnUrl} method="post" className="flex items-center justify-between gap-3 py-2">
+                  <input type="hidden" name="microContentId" value={mc.id} />
+                  <div>
+                    <span className="text-sm font-medium text-slate-900">{mc.title}</span>
+                    <span className="ml-2 text-xs text-slate-500">
+                      · {mc.questionCount} câu hỏi · {mc.videoStatus === "READY" ? "Video sẵn sàng" : "Chưa có video"}
+                    </span>
+                  </div>
+                  <button type="submit" className={ghostButton}>
+                    Thêm vào module
+                  </button>
                 </form>
               ))}
             </div>
