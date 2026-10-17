@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { CoreApiError, coreApi, claimsFromSession } from "@/lib/core-api";
-import { readSessionFromRequest } from "@/lib/route-session";
-import { LTI_CONFIG } from "@/lib/lti";
+import { readSessionFromRequest, isValidOrigin } from "@/lib/route-session";
 
 interface Context {
   params: Promise<{ id: string }>;
@@ -38,7 +37,7 @@ export async function PUT(request: NextRequest, context: Context) {
   }
 
   try {
-    if (request.headers.get("origin") !== new URL(LTI_CONFIG.redirectUri).origin) {
+    if (!isValidOrigin(request)) {
       return NextResponse.json({ error: "Nguồn yêu cầu không hợp lệ." }, { status: 403 });
     }
 
@@ -81,7 +80,7 @@ export async function DELETE(request: NextRequest, context: Context) {
   }
 
   try {
-    if (request.headers.get("origin") !== new URL(LTI_CONFIG.redirectUri).origin) {
+    if (!isValidOrigin(request)) {
       return NextResponse.json({ error: "Nguồn yêu cầu không hợp lệ." }, { status: 403 });
     }
 

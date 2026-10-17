@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { CoreApiError, coreApi, claimsFromSession } from "@/lib/core-api";
-import { readSessionFromRequest } from "@/lib/route-session";
-import { LTI_CONFIG } from "@/lib/lti";
+import { readSessionFromRequest, isValidOrigin } from "@/lib/route-session";
 
 const MAX_VIDEO_BYTES = 500 * 1024 * 1024; // 500 MB
 
@@ -16,7 +15,7 @@ export async function POST(request: NextRequest, context: Context) {
   }
 
   try {
-    if (request.headers.get("origin") !== new URL(LTI_CONFIG.redirectUri).origin) {
+    if (!isValidOrigin(request)) {
       return NextResponse.json({ error: "Nguồn yêu cầu không hợp lệ." }, { status: 403 });
     }
 
