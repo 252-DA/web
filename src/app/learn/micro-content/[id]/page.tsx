@@ -49,7 +49,7 @@ export default async function LearnMicroContentPage({ params, searchParams }: Pr
       <section className="mx-auto max-w-4xl px-4 py-6">
         <LearnMicroContentClient
           microContent={microContent}
-          sid={sid}
+          sid={sid || ""}
           isStaff={isStaff}
         />
       </section>

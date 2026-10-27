@@ -72,8 +72,8 @@ export default async function EditMicroContentPage({ params, searchParams }: Pro
           </div>
           <InstructorNav
             active="micro-content"
-            courseId={session.courseId}
-            sid={sid}
+            courseId={session.courseId || ""}
+            sid={sid || ""}
             isAdmin={session.role === "administrator"}
           />
         </div>
@@ -82,7 +82,7 @@ export default async function EditMicroContentPage({ params, searchParams }: Pro
       <section className="mx-auto max-w-6xl px-4 py-6">
         <EditTabsClient
           microContent={microContent}
-          sid={sid}
+          sid={sid || ""}
           defaultTab={currentTab}
         />
       </section>
