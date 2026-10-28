@@ -70,8 +70,8 @@ function isStaffSession(session: { role?: string; courseRole?: string }): boolea
 }
 
 /**
- * Đọc cuộc trò chuyện gần nhất (hoặc theo conversationId) và danh sách hội thoại
- * của người học trong khóa học hiện tại để khôi phục khi mở lại ngăn chat.
+ * Mặc định trả hội thoại trống và danh sách lịch sử khi mở chat.
+ * Chỉ tải nội dung hội thoại cũ khi người học chọn conversationId cụ thể.
  */
 export async function GET(request: NextRequest) {
   const active = await readSessionFromRequest(request);
@@ -90,10 +90,12 @@ export async function GET(request: NextRequest) {
 
   try {
     const [convData, listData] = await Promise.all([
-      coreApi.getChatConversation<ConversationData>(
-        { courseId: session.courseId, conversationId: rawConvId },
-        claims,
-      ),
+      rawConvId
+        ? coreApi.getChatConversation<ConversationData>(
+            { courseId: session.courseId, conversationId: rawConvId },
+            claims,
+          )
+        : Promise.resolve(null),
       coreApi.listChatConversations<{ conversations: ConversationSummary[] }>(
         { courseId: session.courseId },
         claims,
