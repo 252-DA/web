@@ -18,11 +18,11 @@ export async function POST(request: NextRequest) {
     await coreApi.setChatMode({ mode }, claimsFromSession(active.session));
     const info = CHAT_MODE_INFO[mode];
     return redirectBack(request, "/manage/chat", {
-      success: `Chatbot đang chạy chế độ ${info.letter} (${info.title}). Có hiệu lực từ câu hỏi kế tiếp.`,
+      success: `Trợ giảng AI đang chạy chế độ ${info.letter} (${info.title}). Có hiệu lực từ câu hỏi kế tiếp.`,
     });
   } catch (error) {
     return redirectBack(request, "/manage/chat", {
-      error: messageFromError(error, "Không đổi được chế độ chatbot."),
+      error: messageFromError(error, "Không đổi được chế độ trợ giảng AI."),
     });
   }
 }

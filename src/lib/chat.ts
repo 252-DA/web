@@ -33,6 +33,16 @@ export type ChatCitation = {
   heading_path: string[];
   page_number: number | null;
   quote?: string | null;
+  /** BFF gắn thêm từ core-api để giao diện ghi rõ nguồn là tài liệu nào. */
+  document_name?: string | null;
+  mime_type?: string | null;
+};
+
+/** Gợi ý mở đầu và phạm vi tài liệu cho màn hình chat trống. */
+export type ChatContext = {
+  course: { code: string; name: string } | null;
+  documents: { document_id: string; title: string }[];
+  suggestions: string[];
 };
 
 export type ChatToolCall = {

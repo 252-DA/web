@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { verifyPlatformJwt } from "@/lib/lti-platform-jwt";
 import { redis } from "@/lib/redis";
-import { LTI_CONFIG } from "@/lib/lti";
+import { LTI_CONFIG, isKnownDeployment } from "@/lib/lti";
 import { LtiSession, SESSION_TTL, sessionKey } from "@/lib/session";
 import { coreApi, CoreApiError } from "@/lib/core-api";
 import { deepLinkSettings, deepLinkKey, LTI_CLAIM, type DeepLinkState } from "@/lib/lti-deep-link";
@@ -209,10 +209,7 @@ export async function POST(request: NextRequest) {
 
 
     const deploymentId = payload[DEPLOYMENT_CLAIM];
-    if (
-      LTI_CONFIG.deploymentId &&
-      String(deploymentId || "") !== LTI_CONFIG.deploymentId
-    ) {
+    if (!isKnownDeployment(String(deploymentId || ""))) {
       throw new Error("Invalid LTI deployment_id");
     }
 
@@ -272,8 +269,8 @@ export async function POST(request: NextRequest) {
       return new Response(
         '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
           '<body style="font:14px system-ui,sans-serif;margin:0;padding:24px;color:#334155">' +
-          "<p>Trợ lý hỏi đáp tài liệu chỉ dùng được bên trong một khóa học.</p>" +
-          "<p>Hãy mở một khóa học trong Canvas rồi bấm lại nút này.</p></body>",
+          "<p>Trợ giảng AI trả lời dựa trên tài liệu của từng khóa học, nên chỉ dùng được khi đang ở trong một khóa học.</p>" +
+          "<p>Hãy mở một khóa học trong Canvas rồi bấm lại nút Trợ giảng AI.</p></body>",
         { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } }
       );
     }
@@ -353,7 +350,11 @@ export async function POST(request: NextRequest) {
             : isDeepLink
         ? "/lti/deep-link"
         : targetKind === "chat"
-          ? `/learn/courses/${sync.internalCourseId}/chat?embed=1`
+          ? // Mục "Trợ giảng AI" ở menu khóa học mở trang chat đầy đủ (custom chat_layout=page);
+            // nút ở thanh trên mở ngăn hẹp.
+            custom.chat_layout === "page"
+            ? `/learn/courses/${sync.internalCourseId}/chat`
+            : `/learn/courses/${sync.internalCourseId}/chat?embed=1`
           : targetKind === "quiz_set" && targetId
           ? `/learn/quizzes/${targetId}`
           : mappedRole.courseRole === "instructor" || mappedRole.courseRole === "ta"

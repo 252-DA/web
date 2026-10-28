@@ -79,7 +79,8 @@ type CoreMethod =
   | "GetChatStats"
   | "ListChatConversations"
   | "GetChatConversation"
-  | "DeleteChatConversation";
+  | "DeleteChatConversation"
+  | "GetChatCatalog";
 
 type JsonResponse = { json?: string };
 
@@ -322,6 +323,8 @@ export const coreApi = {
     body: { courseId: string; conversationId: string },
     claims: BffClaims,
   ) => callCore<TResponse>("DeleteChatConversation", body, claims),
+  getChatCatalog: <TResponse = unknown>(courseId: string, claims: BffClaims) =>
+    callCore<TResponse>("GetChatCatalog", { courseId }, claims),
   // Chấm bài luận nộp file qua LTI Asset Processor (docs/essay-asset-processor.md).
   createEssayProcessor: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
     callCore<TResponse>("CreateEssayProcessor", body, claims),

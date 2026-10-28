@@ -82,7 +82,7 @@ export default async function ManageChat({ searchParams }: Props) {
   try {
     stats = await coreApi.getChatStats<Stats>({ courseId: session.courseId, source: sourceFilter }, claimsFromSession(session));
   } catch (err) {
-    error = err instanceof Error ? err.message : "Không tải được số liệu chatbot.";
+    error = err instanceof Error ? err.message : "Không tải được số liệu trợ giảng AI.";
   }
 
   const current: ChatMode = stats && isChatMode(stats.settings.mode) ? stats.settings.mode : "vector";
@@ -97,7 +97,7 @@ export default async function ManageChat({ searchParams }: Props) {
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto max-w-6xl px-4 py-5">
           <p className="text-xs font-semibold uppercase text-slate-500">{isAdmin ? "Admin" : "Giảng viên"}</p>
-          <h1 className="text-xl font-semibold">Chatbot: chế độ truy xuất</h1>
+          <h1 className="text-xl font-semibold">Trợ giảng AI: chế độ truy xuất</h1>
           <p className="mt-1 text-sm text-slate-600">
             Ba chế độ dùng cùng mô hình, cùng prompt trả lời, chỉ khác cách tìm ngữ cảnh. Mỗi câu hỏi đều được ghi lại
             (chế độ, bước, token, độ trễ, 👍/👎) để so sánh bằng số đo.

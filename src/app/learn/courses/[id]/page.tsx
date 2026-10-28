@@ -54,7 +54,7 @@ export default async function CoursePage({ params, searchParams }: Props) {
             href={withSid(`/learn/courses/${id}/chat`, sid)}
             className="mb-4 block rounded border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-medium text-sky-900 hover:border-sky-400"
           >
-            Hỏi đáp về tài liệu khóa học (chatbot) →
+            Trợ giảng AI: hỏi về tài liệu khóa học →
           </a>
         )}
         <div className="overflow-hidden rounded border border-slate-200 bg-white">

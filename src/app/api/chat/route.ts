@@ -8,6 +8,7 @@ import {
   type ChatToolCall,
   type TutorReply,
 } from "@/lib/chat";
+import { withDocumentNames } from "@/lib/chat-sources";
 import { readSessionFromRequest } from "@/lib/route-session";
 import { askTutor, streamTutor, TutorError } from "@/lib/tutor";
 
@@ -77,7 +78,7 @@ export async function GET(request: NextRequest) {
   if (!active) return NextResponse.json({ error: "Phiên đã hết hạn." }, { status: 401 });
   const { session } = active;
   if (!session.chatbotEnabled) {
-    return NextResponse.json({ error: "Chatbot chưa được bật cho khóa học này." }, { status: 403 });
+    return NextResponse.json({ error: "Trợ giảng AI chưa được bật cho khóa học này." }, { status: 403 });
   }
   if (!session.courseId) {
     return NextResponse.json({ error: "Phiên không gắn với khóa học nào." }, { status: 400 });
@@ -99,15 +100,16 @@ export async function GET(request: NextRequest) {
       ),
     ]);
 
-    const turns = (convData?.turns ?? []).map((r) => {
+    const courseId = session.courseId;
+    const turns = await Promise.all((convData?.turns ?? []).map(async (r) => {
       const mode: ChatMode = isChatMode(r.mode) ? r.mode : "vector";
       const toolCalls = Array.isArray(r.tool_calls) ? r.tool_calls : [];
       return {
         runId: r.run_id,
         question: r.question,
         answer: r.status === "OK" ? (r.answer ?? undefined) : undefined,
-        citations: Array.isArray(r.citations) ? r.citations : [],
-        error: r.status === "ERROR" ? (r.error || "Chatbot không trả lời được.") : undefined,
+        citations: await withDocumentNames(Array.isArray(r.citations) ? r.citations : [], courseId, claims),
+        error: r.status === "ERROR" ? (r.error || "Trợ giảng AI chưa trả lời được.") : undefined,
         rating: r.rating ?? undefined,
         ...(isStaff
           ? {
@@ -126,7 +128,7 @@ export async function GET(request: NextRequest) {
             }
           : {}),
       };
-    });
+    }));
 
     return NextResponse.json(
       {
@@ -198,7 +200,7 @@ export async function POST(request: NextRequest) {
   }
   const { session } = active;
   if (!session.chatbotEnabled) {
-    return NextResponse.json({ error: "Chatbot chưa được bật cho khóa học này." }, { status: 403 });
+    return NextResponse.json({ error: "Trợ giảng AI chưa được bật cho khóa học này." }, { status: 403 });
   }
   if (!session.courseId) {
     return NextResponse.json({ error: "Phiên không gắn với khóa học nào." }, { status: 400 });
@@ -313,13 +315,15 @@ export async function POST(request: NextRequest) {
               ...(isStaff && ev.tool ? { tool: ev.tool } : {}),
             });
           } else if (ev.event === "evidence") {
-            sendEvent("evidence", { citations: ev.citations });
+            void withDocumentNames(ev.citations, courseId, claims).then((citations) =>
+              sendEvent("evidence", { citations }),
+            );
           } else if (ev.event === "delta") {
             sendEvent("delta", { text: ev.text });
           }
         });
       } catch (error) {
-        failure = error instanceof TutorError ? error : new TutorError(502, "Chatbot gặp lỗi.");
+        failure = error instanceof TutorError ? error : new TutorError(502, "Trợ giảng AI gặp lỗi.");
       } finally {
         try {
           const run = await coreApi.recordChatRun<{ run_id: string; conversation_id?: string }>(
@@ -350,14 +354,14 @@ export async function POST(request: NextRequest) {
 
       if (failure || !reply) {
         sendEvent("error", {
-          error: failure?.message ?? "Chatbot gặp lỗi.",
+          error: failure?.message ?? "Trợ giảng AI gặp lỗi.",
           runId,
           conversationId,
         });
       } else {
         sendEvent("done", {
           answer: reply.answer,
-          citations: reply.citations,
+          citations: await withDocumentNames(reply.citations, courseId, claims),
           runId,
           conversationId,
           ...(isStaff ? { mode, trace: reply.trace } : {}),
@@ -391,7 +395,7 @@ export async function POST(request: NextRequest) {
   try {
     reply = await askTutor(tutorBody);
   } catch (error) {
-    failure = error instanceof TutorError ? error : new TutorError(502, "Chatbot gặp lỗi.");
+    failure = error instanceof TutorError ? error : new TutorError(502, "Trợ giảng AI gặp lỗi.");
   }
 
   let runId: string | null = null;
@@ -424,14 +428,14 @@ export async function POST(request: NextRequest) {
 
   if (failure || !reply) {
     return NextResponse.json(
-      { error: failure?.message ?? "Chatbot gặp lỗi.", runId, conversationId },
+      { error: failure?.message ?? "Trợ giảng AI gặp lỗi.", runId, conversationId },
       { status: failure?.status ?? 502 },
     );
   }
   return NextResponse.json(
     {
       answer: reply.answer,
-      citations: reply.citations,
+      citations: await withDocumentNames(reply.citations, courseId, claims),
       runId,
       conversationId,
       // Chế độ và vết công cụ chỉ cho giảng viên/admin: sinh viên không cần thấy cách chatbot tìm.

@@ -6,7 +6,7 @@ import {
   jwtVerify,
   type JWTPayload,
 } from "jose";
-import { LTI_CONFIG } from "./lti";
+import { LTI_CONFIG, knownClientIds } from "./lti";
 
 /**
  * Xác minh JWT do platform ký: id_token của mỗi lần launch và các thông báo
@@ -49,7 +49,7 @@ function assertPlatformClaims(payload: JWTPayload): void {
     : typeof payload.aud === "string"
       ? [payload.aud]
       : [];
-  if (!audiences.includes(LTI_CONFIG.clientId)) {
+  if (!audiences.some((aud) => knownClientIds().includes(aud))) {
     throw new Error("Unexpected LTI audience");
   }
 
@@ -130,7 +130,7 @@ export async function verifyPlatformJwt(idToken: string): Promise<JWTPayload> {
   try {
     const { payload } = await jwtVerify(idToken, getPlatformJwks(), {
       issuer: LTI_CONFIG.issuer,
-      audience: LTI_CONFIG.clientId,
+      audience: knownClientIds(),
     });
     return payload;
   } catch (error: unknown) {

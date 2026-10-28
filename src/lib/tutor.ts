@@ -40,10 +40,10 @@ export async function askTutor(body: TutorRequestBody): Promise<TutorReply> {
     });
   } catch (error) {
     const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
-    throw new TutorError(504, timedOut ? "Chatbot trả lời quá lâu." : "Không kết nối được chatbot.");
+    throw new TutorError(504, timedOut ? "Trợ giảng AI trả lời quá lâu." : "Không kết nối được trợ giảng AI.");
   }
   if (!response.ok) {
-    throw new TutorError(response.status === 422 ? 400 : 502, "Chatbot không trả lời được.");
+    throw new TutorError(response.status === 422 ? 400 : 502, "Trợ giảng AI chưa trả lời được.");
   }
   return (await response.json()) as TutorReply;
 }
@@ -63,10 +63,10 @@ export async function streamTutor(
     });
   } catch (error) {
     const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
-    throw new TutorError(504, timedOut ? "Chatbot trả lời quá lâu." : "Không kết nối được chatbot.");
+    throw new TutorError(504, timedOut ? "Trợ giảng AI trả lời quá lâu." : "Không kết nối được trợ giảng AI.");
   }
   if (!response.ok || !response.body) {
-    throw new TutorError(response.status === 422 ? 400 : 502, "Chatbot không trả lời được.");
+    throw new TutorError(response.status === 422 ? 400 : 502, "Trợ giảng AI chưa trả lời được.");
   }
 
   const reader = response.body.getReader();
@@ -93,7 +93,7 @@ export async function streamTutor(
           continue;
         }
         if (parsed.event === "error") {
-          throw new TutorError(502, "Chatbot không trả lời được.");
+          throw new TutorError(502, "Trợ giảng AI chưa trả lời được.");
         }
         if (parsed.event === "done") {
           finalReply = parsed.response;
@@ -105,13 +105,13 @@ export async function streamTutor(
   } catch (error) {
     if (error instanceof TutorError) throw error;
     const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
-    throw new TutorError(504, timedOut ? "Chatbot trả lời quá lâu." : "Không kết nối được chatbot.");
+    throw new TutorError(504, timedOut ? "Trợ giảng AI trả lời quá lâu." : "Không kết nối được trợ giảng AI.");
   } finally {
     reader.releaseLock();
   }
 
   if (!finalReply) {
-    throw new TutorError(502, "Chatbot không trả lời được.");
+    throw new TutorError(502, "Trợ giảng AI chưa trả lời được.");
   }
   return finalReply;
 }

@@ -17,6 +17,16 @@ function withSid(path: string, sid?: string) {
   return `${url.pathname}?${url.searchParams.toString()}`;
 }
 
+function Disabled() {
+  return (
+    <div className="p-4">
+      <p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+        Trợ giảng AI chưa được bật cho khóa học này.
+      </p>
+    </div>
+  );
+}
+
 export default async function CourseChatPage({ params, searchParams }: Props) {
   const [{ id }, sp] = await Promise.all([params, searchParams]);
   const active = await readLtiSession(sp.sid);
@@ -30,14 +40,8 @@ export default async function CourseChatPage({ params, searchParams }: Props) {
   // nên chỉ vẽ khung chat, chiếm hết chiều cao ngăn.
   if (sp.embed === "1") {
     return (
-      <main className="h-screen bg-slate-50 p-3 text-slate-950">
-        {session.chatbotEnabled ? (
-          <ChatPanel sid={sid} showTrace={isStaff} embedded />
-        ) : (
-          <p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-            Chatbot chưa được bật cho khóa học này.
-          </p>
-        )}
+      <main className="h-dvh bg-white text-slate-950">
+        {session.chatbotEnabled ? <ChatPanel sid={sid} canDebug={isStaff} embedded /> : <Disabled />}
       </main>
     );
   }
@@ -49,31 +53,28 @@ export default async function CourseChatPage({ params, searchParams }: Props) {
     course = null;
   }
 
+  // Trang đầy đủ: thanh tiêu đề gọn ở trên, phần còn lại là khung chat ba cột
+  // (lịch sử · hội thoại · nguồn) chiếm hết chiều cao màn hình.
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-950">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto max-w-3xl px-4 py-5">
-          <p className="text-xs font-semibold uppercase text-slate-500">{course?.code ?? "Khóa học"}</p>
-          <h1 className="text-xl font-semibold">Hỏi đáp về tài liệu{course ? `: ${course.name}` : ""}</h1>
-          <p className="mt-1 text-sm">
-            <a href={withSid(`/learn/courses/${id}`, sid)} className="text-slate-600 underline">
-              ← Về trang khóa học
-            </a>
-          </p>
-          {isStaff && (
-            <InstructorNav active="chat" courseId={session.courseId} sid={sid} isAdmin={session.role === "administrator"} />
-          )}
+    <main className="flex h-dvh flex-col bg-slate-50 text-slate-950">
+      <header className="shrink-0 border-b border-slate-200 bg-white px-4 py-3">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <a href={withSid(`/learn/courses/${id}`, sid)} className="text-sm text-slate-500 hover:text-slate-800">
+            ← {course?.code ?? "Khóa học"}
+          </a>
+          <h1 className="text-base font-semibold">Trợ giảng AI{course ? ` · ${course.name}` : ""}</h1>
         </div>
-      </header>
-      <section className="mx-auto max-w-3xl px-4 py-6">
-        {session.chatbotEnabled ? (
-          <ChatPanel sid={sid} showTrace={isStaff} />
-        ) : (
-          <p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-            Chatbot chưa được bật cho khóa học này.
-          </p>
+        {isStaff && (
+          <InstructorNav active="chat" courseId={session.courseId} sid={sid} isAdmin={session.role === "administrator"} />
         )}
-      </section>
+      </header>
+      <div className="min-h-0 flex-1">
+        {session.chatbotEnabled ? (
+          <ChatPanel sid={sid} canDebug={isStaff} courseName={course?.name} />
+        ) : (
+          <Disabled />
+        )}
+      </div>
     </main>
   );
 }

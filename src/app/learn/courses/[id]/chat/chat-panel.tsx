@@ -1,7 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChatCitation, ChatMode, TutorReply } from "@/lib/chat";
+import type { ChatCitation, ChatContext, ChatMode, TutorReply } from "@/lib/chat";
+import { ConversationList, type ConversationSummary } from "./chat-history";
+import {
+  IconCheck,
+  IconCopy,
+  IconDebug,
+  IconMenu,
+  IconPlus,
+  IconRetry,
+  IconSend,
+  IconStop,
+  IconThumbDown,
+  IconThumbUp,
+} from "./chat-icons";
+import { AnswerText, plainAnswer } from "./chat-markdown";
+import { SourceChips, SourcePanel } from "./chat-source-panel";
 
 type Turn = {
   id: number;
@@ -10,6 +25,7 @@ type Turn = {
   citations?: ChatCitation[];
   candidateCitations?: ChatCitation[];
   error?: string;
+  stopped?: boolean;
   runId?: string | null;
   rating?: number;
   mode?: ChatMode;
@@ -18,18 +34,12 @@ type Turn = {
   activeTool?: string;
 };
 
-type ConversationSummary = {
-  conversation_id: string;
-  title: string;
-  created_at: string;
-  updated_at: string;
-};
-
 type Props = {
   sid?: string;
-  /** Giảng viên/TA thấy chế độ truy xuất và vết công cụ của từng câu trả lời. */
-  showTrace: boolean;
-  /** Trong ngăn bên hẹp của Canvas: chiếm hết chiều cao, tin nhắn cuộn riêng, ô nhập ở đáy. */
+  /** Giảng viên/TA/admin được bật "chi tiết kỹ thuật": chế độ truy xuất và vết công cụ của từng câu. */
+  canDebug: boolean;
+  courseName?: string;
+  /** Trong ngăn bên hẹp của Canvas: một cột, lịch sử và nguồn phủ lên khung chat. */
   embedded?: boolean;
 };
 
@@ -45,182 +55,156 @@ function withSid(path: string, sid?: string, extra?: Record<string, string | und
   return qs ? `${path}?${qs}` : path;
 }
 
-function citationLabel(c: ChatCitation) {
-  const where = c.heading_path.length ? c.heading_path[c.heading_path.length - 1] : "Tài liệu";
-  return c.page_number ? `${where} · tr. ${c.page_number}` : where;
-}
+type ConversationPayload = {
+  conversation: ConversationSummary | null;
+  turns: Omit<Turn, "id">[];
+  conversations: ConversationSummary[];
+};
 
-// Trong một dòng: "[1]" thành chỉ số nhỏ (chỉ số không có trích dẫn đi kèm thì để nguyên chữ), **…** thành chữ đậm,
-// `…` thành mã. Không đổi *…* vì dấu sao còn gặp trong công thức.
-function Inline({ text, known }: { text: string; known: Set<number> }) {
-  const parts = text.split(/(\[\d+\]|\*\*[^*\n]+\*\*|`[^`\n]+`)/g);
-  return (
-    <>
-      {parts.map((part, i) => {
-        const bold = /^\*\*([^*\n]+)\*\*$/.exec(part);
-        if (bold) return <strong key={i}>{bold[1]}</strong>;
-        const code = /^`([^`\n]+)`$/.exec(part);
-        if (code) {
-          return (
-            <code key={i} className="rounded bg-slate-100 px-1 font-mono text-[0.85em]">
-              {code[1]}
-            </code>
-          );
-        }
-        const match = /^\[(\d+)\]$/.exec(part);
-        if (match && known.has(Number(match[1]))) {
-          return (
-            <sup key={i} className="mx-0.5 rounded bg-sky-100 px-1 text-xs font-semibold text-sky-800">
-              {match[1]}
-            </sup>
-          );
-        }
-        return <span key={i}>{part}</span>;
-      })}
-    </>
-  );
-}
-
-type Block = { kind: "p"; lines: string[] } | { kind: "ul" | "ol"; items: string[]; start: number };
-
-// Chỉ phần markdown mô hình thực sự dùng: đoạn văn (cách nhau dòng trống), danh sách gạch đầu dòng và đánh số.
-// Tiêu đề "## …" hạ thành một dòng chữ đậm.
-function toBlocks(text: string): Block[] {
-  const blocks: Block[] = [];
-  // Sau một dòng trống, dòng kế tiếp luôn mở khối mới.
-  let open = false;
-  for (const raw of text.split("\n")) {
-    const line = raw.trimEnd();
-    if (!line.trim()) {
-      open = false;
-      continue;
-    }
-    const last = open ? blocks[blocks.length - 1] : undefined;
-    open = true;
-    const bullet = /^\s*[-*•]\s+(.*)$/.exec(line);
-    const numbered = bullet ? null : /^\s*(\d+)[.)]\s+(.*)$/.exec(line);
-    if (bullet) {
-      if (last?.kind === "ul") last.items.push(bullet[1]);
-      else blocks.push({ kind: "ul", items: [bullet[1]], start: 1 });
-      continue;
-    }
-    if (numbered) {
-      if (last?.kind === "ol") last.items.push(numbered[2]);
-      else blocks.push({ kind: "ol", items: [numbered[2]], start: Number(numbered[1]) });
-      continue;
-    }
-    if (last && last.kind !== "p" && /^\s+/.test(line)) {
-      // Dòng thụt vào ngay sau một mục là phần tiếp của mục đó.
-      last.items[last.items.length - 1] += ` ${line.trim()}`;
-      continue;
-    }
-    const heading = /^#{1,6}\s+(.*)$/.exec(line);
-    const content = heading ? `**${heading[1].replace(/\*\*/g, "")}**` : line;
-    if (last?.kind === "p" && !heading) last.lines.push(content);
-    else blocks.push({ kind: "p", lines: [content] });
+async function fetchConversation(sid?: string, conversationId?: string): Promise<ConversationPayload | null> {
+  try {
+    const res = await fetch(withSid("/api/chat", sid, { conversationId }), { cache: "no-store" });
+    return res.ok ? ((await res.json()) as ConversationPayload) : null;
+  } catch {
+    // Không tải được lịch sử thì bắt đầu trống.
+    return null;
   }
-  return blocks;
 }
 
-function AnswerText({ text, citations }: { text: string; citations: ChatCitation[] }) {
-  const known = new Set(citations.map((c) => c.index));
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // iframe của LMS có thể chặn Clipboard API: chép bằng vùng chọn tạm.
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    return ok;
+  }
+}
+
+function Avatar() {
   return (
-    <div className="space-y-2.5 leading-relaxed">
-      {toBlocks(text).map((block, i) => {
-        if (block.kind === "p") {
-          return (
-            <p key={i}>
-              {block.lines.map((line, j) => (
-                <span key={j}>
-                  {j > 0 && <br />}
-                  <Inline text={line} known={known} />
-                </span>
-              ))}
-            </p>
-          );
-        }
-        const items = block.items.map((item, j) => (
-          <li key={j} className="pl-0.5">
-            <Inline text={item} known={known} />
-          </li>
-        ));
-        return block.kind === "ul" ? (
-          <ul key={i} className="list-disc space-y-1 pl-5 marker:text-slate-400">
-            {items}
-          </ul>
-        ) : (
-          <ol key={i} start={block.start} className="list-decimal space-y-1 pl-5 marker:text-slate-500">
-            {items}
-          </ol>
-        );
-      })}
-    </div>
+    <span
+      aria-hidden="true"
+      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sky-600 text-[11px] font-bold text-white"
+    >
+      AI
+    </span>
   );
 }
 
-export function ChatPanel({ sid, showTrace, embedded = false }: Props) {
+export function ChatPanel({ sid, canDebug, courseName, embedded = false }: Props) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(true);
+  const [context, setContext] = useState<ChatContext | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [source, setSource] = useState<ChatCitation | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [debug, setDebug] = useState(false);
+  const [copiedTurn, setCopiedTurn] = useState<number | null>(null);
   const nextId = useRef(1);
-  const bottom = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  const abort = useRef<AbortController | null>(null);
+  const nearBottom = useRef(true);
 
   const patch = (id: number, change: Partial<Turn>) =>
     setTurns((all) => all.map((t) => (t.id === id ? { ...t, ...change } : t)));
 
-  const loadConversation = useCallback(
-    async (targetConvId?: string) => {
-      setLoadingHistory(true);
-      try {
-        const res = await fetch(withSid("/api/chat", sid, { conversationId: targetConvId }), {
-          cache: "no-store",
-        });
-        if (!res.ok) return;
-        const data = (await res.json()) as {
-          conversation: ConversationSummary | null;
-          turns: Omit<Turn, "id">[];
-          conversations: ConversationSummary[];
-        };
+  const scrollToBottom = useCallback((force = false) => {
+    const el = scroller.current;
+    if (!el || (!force && !nearBottom.current)) return;
+    requestAnimationFrame(() => el.scrollTo({ top: el.scrollHeight, behavior: "smooth" }));
+  }, []);
+
+  // Tải hội thoại tách làm hai: fetch thuần, rồi áp vào state trong callback của promise.
+  // Lần tải đầu đã bắt đầu ở trạng thái "đang tải"; chọn hội thoại khác thì đặt trạng thái đó trước.
+  const applyConversation = useCallback(
+    (data: ConversationPayload | null) => {
+      if (data) {
         setConversations(data.conversations ?? []);
         setConversationId(data.conversation?.conversation_id ?? null);
-        setTurns(
-          (data.turns ?? []).map((t) => ({
-            ...t,
-            id: nextId.current++,
-          })),
-        );
-      } catch {
-        // Không tải được lịch sử thì bắt đầu trống.
-      } finally {
-        setLoadingHistory(false);
+        setTurns((data.turns ?? []).map((t) => ({ ...t, id: nextId.current++ })));
+        nearBottom.current = true;
+        scrollToBottom(true);
       }
+      setLoadingHistory(false);
     },
-    [sid],
+    [scrollToBottom],
   );
 
   useEffect(() => {
-    void loadConversation();
-  }, [loadConversation]);
+    let cancelled = false;
+    void fetchConversation(sid).then((data) => {
+      if (!cancelled) applyConversation(data);
+    });
+    fetch(withSid("/api/chat/context", sid), { cache: "no-store" })
+      .then((res) => (res.ok ? (res.json() as Promise<ChatContext>) : null))
+      .then((data) => {
+        if (!cancelled && data) setContext(data);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [applyConversation, sid]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setSource(null);
+      setHistoryOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Ô nhập tự giãn theo nội dung, tối đa vài dòng.
+  useEffect(() => {
+    const el = textarea.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [input]);
+
 
   function startNewConversation() {
     if (busy) return;
     setConversationId(null);
     setTurns([]);
+    setSource(null);
+    setHistoryOpen(false);
+    textarea.current?.focus();
   }
 
-  async function removeCurrentConversation() {
-    if (!conversationId || busy) return;
-    const targetId = conversationId;
-    setConversationId(null);
-    setTurns([]);
+  function selectConversation(id: string) {
+    setHistoryOpen(false);
+    if (id === conversationId) return;
+    setLoadingHistory(true);
+    setSource(null);
+    void fetchConversation(sid, id).then(applyConversation);
+  }
+
+  async function deleteConversation(targetId: string) {
+    if (busy) return;
+    if (targetId === conversationId) {
+      setConversationId(null);
+      setTurns([]);
+      setSource(null);
+    }
     setConversations((prev) => prev.filter((c) => c.conversation_id !== targetId));
     try {
-      await fetch(withSid("/api/chat", sid, { conversationId: targetId }), {
-        method: "DELETE",
-      });
+      await fetch(withSid("/api/chat", sid, { conversationId: targetId }), { method: "DELETE" });
     } catch {
       // Đã xóa trên giao diện.
     }
@@ -240,27 +224,28 @@ export function ChatPanel({ sid, showTrace, embedded = false }: Props) {
     });
   }
 
-  async function send() {
-    const question = input.trim();
+  function stop() {
+    abort.current?.abort();
+  }
+
+  async function send(override?: string) {
+    const question = (override ?? input).trim();
     if (!question || busy) return;
     const id = nextId.current++;
     setTurns((all) => [...all, { id, question, phase: "searching" }]);
-    setInput("");
+    if (override === undefined) setInput("");
     setBusy(true);
-    setTimeout(() => bottom.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    nearBottom.current = true;
+    scrollToBottom(true);
+    const controller = new AbortController();
+    abort.current = controller;
 
     try {
       const response = await fetch(withSid("/api/chat", sid), {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "text/event-stream",
-        },
-        body: JSON.stringify({
-          message: question,
-          conversationId: conversationId ?? undefined,
-          stream: true,
-        }),
+        headers: { "content-type": "application/json", accept: "text/event-stream" },
+        body: JSON.stringify({ message: question, conversationId: conversationId ?? undefined, stream: true }),
+        signal: controller.signal,
       });
 
       const contentType = response.headers.get("content-type") ?? "";
@@ -270,15 +255,10 @@ export function ChatPanel({ sid, showTrace, embedded = false }: Props) {
           runId?: string | null;
           conversationId?: string | null;
           mode?: ChatMode;
-          trace?: TutorReply["trace"];
         };
         if (data.conversationId) rememberConversation(data.conversationId, question);
         if (!response.ok || !data.answer) {
-          patch(id, {
-            error: data.error || "Chatbot không trả lời được.",
-            runId: data.runId,
-            phase: undefined,
-          });
+          patch(id, { error: data.error || "Trợ giảng AI chưa trả lời được.", runId: data.runId, phase: undefined });
         } else {
           patch(id, {
             answer: data.answer,
@@ -295,14 +275,12 @@ export function ChatPanel({ sid, showTrace, embedded = false }: Props) {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const frames = buffer.split("\n\n");
         buffer = frames.pop() ?? "";
-
         for (const frame of frames) {
           const lines = frame.split("\n");
           const eventLine = lines.find((l) => l.startsWith("event:"));
@@ -315,7 +293,6 @@ export function ChatPanel({ sid, showTrace, embedded = false }: Props) {
           } catch {
             continue;
           }
-
           if (eventName === "step") {
             patch(id, {
               phase: payload.phase === "answering" ? "answering" : "searching",
@@ -328,21 +305,15 @@ export function ChatPanel({ sid, showTrace, embedded = false }: Props) {
           } else if (eventName === "delta") {
             const chunkText = typeof payload.text === "string" ? payload.text : "";
             if (chunkText) {
-              setTurns((all) =>
-                all.map((t) =>
-                  t.id === id ? { ...t, answer: (t.answer ?? "") + chunkText } : t,
-                ),
-              );
+              setTurns((all) => all.map((t) => (t.id === id ? { ...t, answer: (t.answer ?? "") + chunkText } : t)));
+              scrollToBottom();
             }
           } else if (eventName === "done") {
-            const convId =
-              typeof payload.conversationId === "string" ? payload.conversationId : null;
+            const convId = typeof payload.conversationId === "string" ? payload.conversationId : null;
             if (convId) rememberConversation(convId, question);
             patch(id, {
               answer: typeof payload.answer === "string" ? payload.answer : "",
-              citations: Array.isArray(payload.citations)
-                ? (payload.citations as ChatCitation[])
-                : [],
+              citations: Array.isArray(payload.citations) ? (payload.citations as ChatCitation[]) : [],
               runId: typeof payload.runId === "string" ? payload.runId : null,
               mode: payload.mode as ChatMode | undefined,
               trace: payload.trace as TutorReply["trace"] | undefined,
@@ -350,14 +321,10 @@ export function ChatPanel({ sid, showTrace, embedded = false }: Props) {
               activeTool: undefined,
             });
           } else if (eventName === "error") {
-            const convId =
-              typeof payload.conversationId === "string" ? payload.conversationId : null;
+            const convId = typeof payload.conversationId === "string" ? payload.conversationId : null;
             if (convId) rememberConversation(convId, question);
             patch(id, {
-              error:
-                typeof payload.error === "string"
-                  ? payload.error
-                  : "Chatbot không trả lời được.",
+              error: typeof payload.error === "string" ? payload.error : "Trợ giảng AI chưa trả lời được.",
               runId: typeof payload.runId === "string" ? payload.runId : null,
               phase: undefined,
               activeTool: undefined,
@@ -366,10 +333,15 @@ export function ChatPanel({ sid, showTrace, embedded = false }: Props) {
         }
       }
     } catch {
-      patch(id, { error: "Mất kết nối tới máy chủ.", phase: undefined, activeTool: undefined });
+      if (controller.signal.aborted) {
+        patch(id, { stopped: true, phase: undefined, activeTool: undefined });
+      } else {
+        patch(id, { error: "Mất kết nối tới máy chủ.", phase: undefined, activeTool: undefined });
+      }
     } finally {
+      abort.current = null;
       setBusy(false);
-      setTimeout(() => bottom.current?.scrollIntoView({ behavior: "smooth" }), 50);
+      scrollToBottom();
     }
   }
 
@@ -388,183 +360,346 @@ export function ChatPanel({ sid, showTrace, embedded = false }: Props) {
     }
   }
 
+  async function copy(turn: Turn) {
+    if (!turn.answer) return;
+    if (await copyText(plainAnswer(turn.answer))) {
+      setCopiedTurn(turn.id);
+      setTimeout(() => setCopiedTurn((current) => (current === turn.id ? null : current)), 1500);
+    }
+  }
+
+  function openCitation(turn: Turn, index: number) {
+    const found = (turn.citations ?? turn.candidateCitations ?? []).find((c) => c.index === index);
+    if (found) setSource(found);
+  }
+
+  const title = conversations.find((c) => c.conversation_id === conversationId)?.title ?? "Cuộc trò chuyện mới";
+  const courseLabel = context?.course?.name ?? courseName;
+  const history = (
+    <ConversationList
+      conversations={conversations}
+      activeId={conversationId}
+      disabled={busy || loadingHistory}
+      onSelect={selectConversation}
+      onNew={startNewConversation}
+      onDelete={(id) => void deleteConversation(id)}
+    />
+  );
+
   return (
-    <div className={embedded ? "flex h-full min-h-0 flex-col gap-3" : "flex flex-col gap-4"}>
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-200 pb-2 text-xs">
-        <select
-          aria-label="Chọn cuộc trò chuyện"
-          disabled={busy || loadingHistory}
-          value={conversationId ?? ""}
-          onChange={(e) => {
-            const val = e.target.value;
-            if (!val) startNewConversation();
-            else void loadConversation(val);
-          }}
-          className="min-w-0 flex-1 truncate rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
-        >
-          <option value="">Cuộc trò chuyện mới</option>
-          {conversations.map((c) => (
-            <option key={c.conversation_id} value={c.conversation_id}>
-              {c.title}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          disabled={busy || (!conversationId && turns.length === 0)}
-          onClick={startNewConversation}
-          className="shrink-0 rounded border border-slate-300 bg-white px-2.5 py-1 font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
-        >
-          + Mới
-        </button>
-        {conversationId && (
+    <div className="relative flex h-full min-h-0 bg-white text-slate-900">
+      {!embedded && (
+        <aside className="hidden w-64 shrink-0 border-r border-slate-200 bg-slate-50 md:block">{history}</aside>
+      )}
+
+      {/* Lịch sử dạng ngăn trượt: luôn dùng trong ngăn Canvas, và trên màn hình hẹp. */}
+      {historyOpen && (
+        <div className={`absolute inset-0 z-30 flex ${embedded ? "" : "md:hidden"}`}>
+          <div className="h-full w-72 max-w-[85%] border-r border-slate-200 bg-slate-50 shadow-xl">{history}</div>
           <button
             type="button"
-            disabled={busy}
-            onClick={() => void removeCurrentConversation()}
-            className="shrink-0 rounded border border-slate-200 bg-white px-2 py-1 text-slate-500 hover:border-red-300 hover:text-red-700 disabled:opacity-50"
-          >
-            Xóa
-          </button>
-        )}
-      </div>
+            aria-label="Đóng lịch sử"
+            onClick={() => setHistoryOpen(false)}
+            className="flex-1 bg-slate-900/20"
+          />
+        </div>
+      )}
 
-      <div className={embedded ? "min-h-0 flex-1 space-y-4 overflow-y-auto" : "space-y-5"}>
-        {turns.length === 0 && !loadingHistory && (
-          <div className="rounded-lg border border-dashed border-slate-300 bg-white p-6 text-sm text-slate-600">
-            Hỏi bất cứ điều gì về tài liệu của khóa học. Câu trả lời chỉ dựa trên tài liệu và có số trích dẫn để mở lại
-            đúng đoạn. Nếu tài liệu không nói về điều đó, chatbot sẽ nói rõ thay vì đoán.
-          </div>
-        )}
-        {turns.map((turn) => {
-          const activeCitations = turn.citations ?? turn.candidateCitations ?? [];
-          return (
-            <div key={turn.id} className="space-y-2">
-              <div className="ml-auto max-w-[85%] rounded-lg bg-slate-900 px-4 py-3 text-sm text-white">
-                <p className="whitespace-pre-wrap">{turn.question}</p>
-              </div>
-              <div className="max-w-[92%] rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm">
-                {turn.error ? (
-                  <p className="text-red-700">{turn.error}</p>
-                ) : turn.answer ? (
-                  <>
-                    <AnswerText text={turn.answer} citations={activeCitations} />
-                    {(turn.citations?.length ?? 0) > 0 && (
-                      <ul className="mt-3 space-y-1.5 border-t border-slate-100 pt-3">
-                        {turn.citations?.map((c) => (
-                          <li key={c.chunk_id}>
-                            <details className="group">
-                              <summary className="cursor-pointer text-xs text-slate-700">
-                                <span className="mr-1.5 rounded bg-sky-100 px-1.5 py-0.5 font-semibold text-sky-800">
-                                  {c.index}
-                                </span>
-                                {citationLabel(c)}
-                              </summary>
-                              {c.quote && (
-                                <p className="mt-1.5 border-l-2 border-slate-200 pl-3 text-xs text-slate-600">
-                                  {c.quote}
-                                </p>
-                              )}
-                              {c.heading_path.length > 1 && (
-                                <p className="mt-1 pl-3 text-xs text-slate-400">{c.heading_path.join(" › ")}</p>
-                              )}
-                            </details>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
-                      {turn.runId && (
-                        <>
-                          <button
-                            type="button"
-                            aria-label="Câu trả lời hữu ích"
-                            aria-pressed={turn.rating === 1}
-                            onClick={() => rate(turn, 1)}
-                            className={`rounded border px-2 py-1 ${turn.rating === 1 ? "border-emerald-600 bg-emerald-50 text-emerald-800" : "border-slate-200 hover:border-slate-400"}`}
-                          >
-                            👍
-                          </button>
-                          <button
-                            type="button"
-                            aria-label="Câu trả lời chưa tốt"
-                            aria-pressed={turn.rating === -1}
-                            onClick={() => rate(turn, -1)}
-                            className={`rounded border px-2 py-1 ${turn.rating === -1 ? "border-red-600 bg-red-50 text-red-800" : "border-slate-200 hover:border-slate-400"}`}
-                          >
-                            👎
-                          </button>
-                        </>
-                      )}
-                      {showTrace && turn.trace && (
-                        <span className="ml-auto text-slate-400">
-                          {turn.mode} · {turn.trace.steps} bước · {turn.trace.tool_calls.length} lần gọi công cụ ·{" "}
-                          {(turn.trace.latency_ms / 1000).toFixed(1)}s
-                        </span>
-                      )}
+      <section className="flex min-w-0 flex-1 flex-col">
+        <header className="flex shrink-0 items-center gap-2 border-b border-slate-200 px-3 py-2">
+          <button
+            type="button"
+            onClick={() => setHistoryOpen(true)}
+            aria-label="Lịch sử trò chuyện"
+            className={`rounded-lg p-1.5 text-slate-600 hover:bg-slate-100 ${embedded ? "" : "md:hidden"}`}
+          >
+            <IconMenu />
+          </button>
+          {/* Tên công cụ và khóa học đã ở tiêu đề ngăn Canvas / đầu trang: ở đây chỉ còn tên hội thoại. */}
+          <p className="min-w-0 flex-1 truncate text-sm font-semibold" title={title}>
+            {title}
+          </p>
+          {canDebug && (
+            <button
+              type="button"
+              onClick={() => setDebug((on) => !on)}
+              aria-pressed={debug}
+              title="Chi tiết kỹ thuật (chỉ giảng viên thấy)"
+              className={`rounded-lg p-1.5 ${debug ? "bg-amber-100 text-amber-800" : "text-slate-500 hover:bg-slate-100"}`}
+            >
+              <IconDebug />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={startNewConversation}
+            disabled={busy || (!conversationId && turns.length === 0)}
+            title="Cuộc trò chuyện mới"
+            aria-label="Cuộc trò chuyện mới"
+            className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100 disabled:opacity-40"
+          >
+            <IconPlus />
+          </button>
+        </header>
+
+        <div
+          ref={scroller}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+          }}
+          className="min-h-0 flex-1 overflow-y-auto"
+        >
+          <div className={`mx-auto max-w-3xl space-y-6 ${embedded ? "px-3 py-4" : "px-4 py-6"}`}>
+            {loadingHistory && turns.length === 0 && (
+              <p className="animate-pulse text-sm text-slate-400">Đang tải cuộc trò chuyện…</p>
+            )}
+
+            {!loadingHistory && turns.length === 0 && (
+              <div className={embedded ? "pt-2" : "pt-8"}>
+                <div className="flex items-center gap-3">
+                  <Avatar />
+                  <h2 className="text-lg font-semibold">
+                    Hỏi trợ giảng AI{courseLabel ? ` về ${courseLabel}` : ""}
+                  </h2>
+                </div>
+                <p className="mt-3 text-sm leading-relaxed text-slate-600">
+                  Câu trả lời chỉ dựa trên tài liệu giảng viên đã đưa lên. Mỗi ý đều có số trích dẫn, bấm vào để xem
+                  đúng đoạn và đúng trang. Nếu tài liệu không nói tới, trợ giảng sẽ nói rõ thay vì đoán.
+                </p>
+                {context && context.suggestions.length > 0 && (
+                  <div className="mt-5">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Bạn có thể hỏi</p>
+                    <div className={`grid gap-2 ${embedded ? "" : "sm:grid-cols-2"}`}>
+                      {context.suggestions.map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void send(s)}
+                          className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left text-sm text-slate-700 hover:border-sky-300 hover:bg-sky-50 disabled:opacity-50"
+                        >
+                          {s}
+                        </button>
+                      ))}
                     </div>
-                    {showTrace && turn.trace && turn.trace.tool_calls.length > 0 && (
-                      <details className="mt-2 text-xs text-slate-600">
-                        <summary className="cursor-pointer">Vết công cụ</summary>
-                        <ol className="mt-1 list-decimal space-y-0.5 pl-5">
-                          {turn.trace.tool_calls.map((call, i) => (
-                            <li key={i}>
-                              <code>{call.tool}</code> {call.args ? JSON.stringify(call.args) : ""}{" "}
-                              {call.ok === false ? <span className="text-red-700">lỗi {call.error}</span> : null}
-                              {typeof call.found === "number" ? (
-                                <span className="text-slate-400">→ {call.found}</span>
-                              ) : null}
-                            </li>
-                          ))}
-                        </ol>
-                      </details>
-                    )}
-                  </>
-                ) : (
-                  <p className="animate-pulse text-slate-500">
-                    {turn.phase === "answering"
-                      ? "Đang soạn câu trả lời…"
-                      : showTrace && turn.activeTool
-                        ? `Đang tìm trong tài liệu (${turn.activeTool})…`
-                        : "Đang tìm trong tài liệu…"}
-                  </p>
+                  </div>
+                )}
+                {context && context.documents.length > 0 && (
+                  <details className="mt-4 text-xs text-slate-500">
+                    <summary className="cursor-pointer">
+                      Trợ giảng đang dùng {context.documents.length} tài liệu của khóa học
+                    </summary>
+                    <ul className="mt-2 space-y-0.5 pl-4">
+                      {context.documents.map((d) => (
+                        <li key={d.document_id} className="truncate">
+                          {d.title}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
                 )}
               </div>
-            </div>
-          );
-        })}
-        <div ref={bottom} />
-      </div>
+            )}
 
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void send();
-        }}
-        className={`flex gap-2 border-t border-slate-200 ${embedded ? "shrink-0 pt-3" : "sticky bottom-0 bg-slate-50 py-3"}`}
-      >
-        <textarea
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              void send();
-            }
+            {turns.map((turn) => {
+              const sources = turn.citations ?? [];
+              const pending = !turn.answer && !turn.error && !turn.stopped;
+              return (
+                <div key={turn.id} className="space-y-3">
+                  <div className="flex justify-end">
+                    <div className="max-w-[85%] rounded-2xl rounded-br-md bg-slate-900 px-4 py-2.5 text-sm text-white">
+                      <p className="whitespace-pre-wrap">{turn.question}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3">
+                    {!embedded && <Avatar />}
+                    <div className="min-w-0 flex-1 text-sm">
+                      {turn.error ? (
+                        <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-800">{turn.error}</p>
+                      ) : turn.answer ? (
+                        <AnswerText
+                          text={turn.answer}
+                          citations={turn.citations ?? turn.candidateCitations ?? []}
+                          onCite={(n) => openCitation(turn, n)}
+                        />
+                      ) : null}
+
+                      {pending && (
+                        <div className="space-y-2">
+                          <p className="animate-pulse text-slate-500">
+                            {turn.phase === "answering"
+                              ? "Đang soạn câu trả lời…"
+                              : debug && turn.activeTool
+                                ? `Đang tìm trong tài liệu (${turn.activeTool})…`
+                                : "Đang tìm trong tài liệu…"}
+                          </p>
+                          {(turn.candidateCitations?.length ?? 0) > 0 && (
+                            <div>
+                              <p className="mb-1 text-xs text-slate-400">
+                                Đã tìm thấy {turn.candidateCitations?.length} đoạn liên quan
+                              </p>
+                              <SourceChips citations={turn.candidateCitations ?? []} muted />
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {turn.stopped && (
+                        <p className="mt-2 text-xs text-slate-500">
+                          Đã dừng. Nếu trợ giảng vẫn trả lời xong, câu trả lời sẽ có khi mở lại cuộc trò chuyện này.
+                        </p>
+                      )}
+
+                      {sources.length > 0 && (
+                        <div className="mt-3">
+                          <p className="mb-1.5 text-xs font-medium text-slate-500">Nguồn</p>
+                          <SourceChips citations={sources} activeChunkId={source?.chunk_id} onOpen={setSource} />
+                        </div>
+                      )}
+
+                      {(turn.answer || turn.error || turn.stopped) && !pending && (
+                        <div className="mt-2 flex flex-wrap items-center gap-1 text-slate-500">
+                          {turn.answer && (
+                            <button
+                              type="button"
+                              onClick={() => void copy(turn)}
+                              className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs hover:bg-slate-100"
+                            >
+                              {copiedTurn === turn.id ? <IconCheck /> : <IconCopy />}
+                              {copiedTurn === turn.id ? "Đã chép" : "Sao chép"}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => void send(turn.question)}
+                            className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs hover:bg-slate-100 disabled:opacity-40"
+                          >
+                            <IconRetry />
+                            Hỏi lại
+                          </button>
+                          {turn.runId && turn.answer && (
+                            <>
+                              <button
+                                type="button"
+                                aria-label="Câu trả lời hữu ích"
+                                aria-pressed={turn.rating === 1}
+                                onClick={() => void rate(turn, 1)}
+                                className={`rounded-md p-1 ${turn.rating === 1 ? "bg-emerald-50 text-emerald-700" : "hover:bg-slate-100"}`}
+                              >
+                                <IconThumbUp />
+                              </button>
+                              <button
+                                type="button"
+                                aria-label="Câu trả lời chưa tốt"
+                                aria-pressed={turn.rating === -1}
+                                onClick={() => void rate(turn, -1)}
+                                className={`rounded-md p-1 ${turn.rating === -1 ? "bg-red-50 text-red-700" : "hover:bg-slate-100"}`}
+                              >
+                                <IconThumbDown />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      )}
+
+                      {debug && turn.trace && (
+                        <details className="mt-2 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-900">
+                          <summary className="cursor-pointer">
+                            {turn.mode} · {turn.trace.steps} bước · {turn.trace.tool_calls.length} lần gọi công cụ ·{" "}
+                            {(turn.trace.latency_ms / 1000).toFixed(1)}s
+                          </summary>
+                          {turn.trace.tool_calls.length > 0 && (
+                            <ol className="mt-1 list-decimal space-y-0.5 pl-5">
+                              {turn.trace.tool_calls.map((call, i) => (
+                                <li key={i}>
+                                  <code>{call.tool}</code> {call.args ? JSON.stringify(call.args) : ""}{" "}
+                                  {call.ok === false ? <span className="text-red-700">lỗi {call.error}</span> : null}
+                                  {typeof call.found === "number" ? (
+                                    <span className="text-amber-700/70">→ {call.found}</span>
+                                  ) : null}
+                                </li>
+                              ))}
+                            </ol>
+                          )}
+                        </details>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void send();
           }}
-          rows={2}
-          maxLength={4000}
-          placeholder="Nhập câu hỏi về tài liệu khóa học…"
-          className="flex-1 resize-none rounded border border-slate-300 bg-white px-3 py-2 text-sm"
-        />
-        <button
-          disabled={busy || !input.trim()}
-          className="self-end rounded border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+          className={`shrink-0 border-t border-slate-200 bg-white ${embedded ? "px-3 py-2.5" : "px-4 py-3"}`}
         >
-          {busy ? "Đang trả lời…" : "Gửi"}
-        </button>
-      </form>
+          <div className="mx-auto max-w-3xl">
+            <div className="flex items-end gap-2 rounded-2xl border border-slate-300 bg-white px-3 py-2 shadow-sm focus-within:border-slate-500">
+              <textarea
+                ref={textarea}
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                    event.preventDefault();
+                    void send();
+                  }
+                }}
+                rows={1}
+                maxLength={4000}
+                aria-label="Câu hỏi"
+                placeholder="Hỏi về nội dung khóa học…"
+                className="max-h-40 min-h-[1.5rem] flex-1 resize-none bg-transparent py-1 text-sm outline-none placeholder:text-slate-400"
+              />
+              {busy ? (
+                <button
+                  type="button"
+                  onClick={stop}
+                  aria-label="Dừng trả lời"
+                  title="Dừng"
+                  className="rounded-full bg-slate-900 p-2 text-white hover:bg-slate-700"
+                >
+                  <IconStop />
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={!input.trim()}
+                  aria-label="Gửi câu hỏi"
+                  title="Gửi (Enter)"
+                  className="rounded-full bg-slate-900 p-2 text-white hover:bg-slate-700 disabled:bg-slate-300"
+                >
+                  <IconSend />
+                </button>
+              )}
+            </div>
+            <p className="mt-1.5 text-center text-[11px] leading-snug text-slate-400">
+              Trợ giảng AI chỉ dựa trên tài liệu khóa học và có thể sai — hãy mở nguồn để kiểm tra. Hỏi về điểm, hạn
+              nộp: liên hệ giảng viên.
+            </p>
+          </div>
+        </form>
+      </section>
+
+      {source && (
+        <aside
+          className={
+            embedded
+              ? "absolute inset-0 z-20"
+              : "fixed inset-0 z-40 lg:static lg:z-auto lg:w-[440px] lg:shrink-0 lg:border-l lg:border-slate-200"
+          }
+        >
+          <SourcePanel citation={source} sid={sid} compact={embedded} onClose={() => setSource(null)} />
+        </aside>
+      )}
     </div>
   );
 }
-
