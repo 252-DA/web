@@ -36,6 +36,8 @@ export type ChatCitation = {
   /** BFF gắn thêm từ core-api để giao diện ghi rõ nguồn là tài liệu nào. */
   document_name?: string | null;
   mime_type?: string | null;
+  /** "outline" là đề cương môn học (không thuộc file nào); thiếu nghĩa là đoạn tài liệu. */
+  kind?: "chunk" | "outline";
 };
 
 /** Gợi ý mở đầu và phạm vi tài liệu cho màn hình chat trống. */

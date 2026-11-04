@@ -308,6 +308,9 @@ export function ChatPanel({ sid, canDebug, courseName, embedded = false }: Props
               setTurns((all) => all.map((t) => (t.id === id ? { ...t, answer: (t.answer ?? "") + chunkText } : t)));
               scrollToBottom();
             }
+          } else if (eventName === "reset") {
+            // Mô hình viết lại sau khi lượt trước bị loại: bỏ chữ đã phát để không nối chữ cũ với chữ mới.
+            patch(id, { answer: undefined });
           } else if (eventName === "done") {
             const convId = typeof payload.conversationId === "string" ? payload.conversationId : null;
             if (convId) rememberConversation(convId, question);

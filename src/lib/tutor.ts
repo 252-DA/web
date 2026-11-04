@@ -25,6 +25,7 @@ export type TutorStreamEvent =
   | { event: "step"; phase: "searching" | "answering"; tool?: string }
   | { event: "evidence"; citations: ChatCitation[] }
   | { event: "delta"; text: string }
+  | { event: "reset" }
   | { event: "done"; response: TutorReply }
   | { event: "error"; detail?: string };
 

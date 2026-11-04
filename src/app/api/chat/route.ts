@@ -322,6 +322,9 @@ export async function POST(request: NextRequest) {
             );
           } else if (ev.event === "delta") {
             sendEvent("delta", { text: ev.text });
+          } else if (ev.event === "reset") {
+            // Lượt trả lời đã phát bị bỏ: người học không được thấy chữ cũ nối với chữ mới.
+            sendEvent("reset", {});
           }
         });
       } catch (error) {

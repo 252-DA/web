@@ -2,10 +2,27 @@ import type { ChatCitation } from "@/lib/chat";
 
 type CiteHandler = (index: number) => void;
 
-// Trong một dòng: "[1]" thành nút số trích dẫn (bấm mở nguồn; số không có trích dẫn đi kèm thì để nguyên chữ),
-// **…** thành chữ đậm, `…` thành mã. Không đổi *…* vì dấu sao còn gặp trong công thức.
+// Cùng khuôn với _MARKER của ai-tutor: "[2]", "[2, 3]" hoặc "[2;3]".
+const MARKER = /^\[(\d{1,3}(?:\s*[,;]\s*\d{1,3})*)\]$/;
+
+function CiteButton({ n, onCite }: { n: number; onCite?: CiteHandler }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onCite?.(n)}
+      aria-label={`Mở nguồn ${n}`}
+      className="mx-0.5 inline-flex -translate-y-1 items-center rounded bg-sky-100 px-1 align-baseline text-[11px] font-semibold leading-4 text-sky-800 hover:bg-sky-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+    >
+      {n}
+    </button>
+  );
+}
+
+// Trong một dòng: "[1]" (và "[2, 3]", "[2;3]") thành nút số trích dẫn, mỗi số một nút (bấm mở nguồn;
+// số không có trích dẫn đi kèm thì để nguyên chữ), **…** thành chữ đậm, `…` thành mã.
+// Không đổi *…* vì dấu sao còn gặp trong công thức.
 function Inline({ text, known, onCite }: { text: string; known: Set<number>; onCite?: CiteHandler }) {
-  const parts = text.split(/(\[\d+\]|\*\*[^*\n]+\*\*|`[^`\n]+`)/g);
+  const parts = text.split(/(\[\d{1,3}(?:\s*[,;]\s*\d{1,3})*\]|\*\*[^*\n]+\*\*|`[^`\n]+`)/g);
   return (
     <>
       {parts.map((part, i) => {
@@ -19,20 +36,18 @@ function Inline({ text, known, onCite }: { text: string; known: Set<number>; onC
             </code>
           );
         }
-        const match = /^\[(\d+)\]$/.exec(part);
-        if (match && known.has(Number(match[1]))) {
-          const n = Number(match[1]);
-          return (
-            <button
-              key={i}
-              type="button"
-              onClick={() => onCite?.(n)}
-              aria-label={`Mở nguồn ${n}`}
-              className="mx-0.5 inline-flex -translate-y-1 items-center rounded bg-sky-100 px-1 align-baseline text-[11px] font-semibold leading-4 text-sky-800 hover:bg-sky-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
-            >
-              {n}
-            </button>
-          );
+        const marker = MARKER.exec(part);
+        if (marker) {
+          const numbers = marker[1].split(/[,;]/).map((s) => Number(s.trim()));
+          if (numbers.some((n) => known.has(n))) {
+            return (
+              <span key={i}>
+                {numbers.map((n, j) =>
+                  known.has(n) ? <CiteButton key={j} n={n} onCite={onCite} /> : <span key={j}>[{n}]</span>,
+                )}
+              </span>
+            );
+          }
         }
         return <span key={i}>{part}</span>;
       })}
@@ -128,7 +143,7 @@ export function AnswerText({
 /** Chữ để sao chép: bỏ số trích dẫn và dấu ** của markdown. */
 export function plainAnswer(text: string): string {
   return text
-    .replace(/\s?\[\d+\]/g, "")
+    .replace(/\s?\[\d{1,3}(?:\s*[,;]\s*\d{1,3})*\]/g, "")
     .replace(/\*\*([^*\n]+)\*\*/g, "$1")
     .trim();
 }

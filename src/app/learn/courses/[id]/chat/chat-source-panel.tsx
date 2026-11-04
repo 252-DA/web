@@ -7,8 +7,16 @@ function withSid(path: string, sid?: string) {
   return sid ? `${path}?sid=${encodeURIComponent(sid)}` : path;
 }
 
+/** Đề cương môn học không thuộc file nào nên không có tài liệu để mở. */
+function isOutline(c: ChatCitation) {
+  return c.kind === "outline" || !c.document_id;
+}
+
+const OUTLINE_LABEL = "Đề cương môn học";
+
 /** "Ch2_LSH_lecture.pdf" → "Ch2 LSH lecture": tên file dễ đọc trong nhãn nguồn. */
 export function documentLabel(c: ChatCitation): string {
+  if (isOutline(c)) return c.heading_path[0]?.trim() || OUTLINE_LABEL;
   const name = c.document_name?.trim();
   if (!name) return "Tài liệu";
   return name.replace(/\.(pdf|pptx?|docx?)$/i, "").replace(/[_]+/g, " ").trim() || name;
@@ -46,7 +54,7 @@ export function SourceChips({
               type="button"
               disabled={!onOpen}
               onClick={() => onOpen?.(c)}
-              title={[documentLabel(c), ...c.heading_path].join(" › ")}
+              title={isOutline(c) ? c.heading_path.join(" › ") || documentLabel(c) : [documentLabel(c), ...c.heading_path].join(" › ")}
               className={`flex max-w-full items-center gap-1.5 rounded-full border px-2 py-1 text-xs ${
                 active
                   ? "border-sky-400 bg-sky-50 text-sky-900"
@@ -57,7 +65,7 @@ export function SourceChips({
             >
               <span className="rounded-full bg-sky-100 px-1.5 text-[10px] font-semibold text-sky-800">{c.index}</span>
               <span className="truncate">{documentLabel(c)}</span>
-              {c.page_number ? <span className="shrink-0 text-slate-500">tr. {c.page_number}</span> : null}
+              {!isOutline(c) && c.page_number ? <span className="shrink-0 text-slate-500">tr. {c.page_number}</span> : null}
             </button>
           </li>
         );
@@ -79,7 +87,8 @@ export function SourcePanel({
   compact: boolean;
   onClose: () => void;
 }) {
-  const pdf = isPdf(citation);
+  const outline = isOutline(citation);
+  const pdf = !outline && isPdf(citation);
   return (
     <div className="flex h-full min-h-0 flex-col bg-white">
       <div className="flex shrink-0 items-start gap-2 border-b border-slate-200 px-4 py-3">
@@ -98,11 +107,16 @@ export function SourcePanel({
             <span className="rounded-full bg-sky-100 px-1.5 text-sky-800">{citation.index}</span>
             Nguồn trích dẫn
           </p>
-          <p className="mt-1 truncate text-sm font-semibold text-slate-900" title={citation.document_name ?? undefined}>
-            {documentLabel(citation)}
-            {citation.page_number ? <span className="font-normal text-slate-500"> · trang {citation.page_number}</span> : null}
+          <p
+            className="mt-1 truncate text-sm font-semibold text-slate-900"
+            title={outline ? undefined : (citation.document_name ?? undefined)}
+          >
+            {outline ? citation.heading_path.join(" › ") || documentLabel(citation) : documentLabel(citation)}
+            {!outline && citation.page_number ? (
+              <span className="font-normal text-slate-500"> · trang {citation.page_number}</span>
+            ) : null}
           </p>
-          {citation.heading_path.length > 0 && (
+          {!outline && citation.heading_path.length > 0 && (
             <p className="mt-0.5 truncate text-xs text-slate-500">{citation.heading_path.join(" › ")}</p>
           )}
         </div>
@@ -117,13 +131,17 @@ export function SourcePanel({
           </button>
         )}
       </div>
-      {citation.quote && (
+      {!outline && citation.quote && (
         <blockquote className="shrink-0 border-b border-slate-100 bg-amber-50/60 px-4 py-3 text-sm leading-relaxed text-slate-700">
           “{citation.quote}”
         </blockquote>
       )}
-      <div className="min-h-0 flex-1 bg-slate-100">
-        {pdf ? (
+      <div className={outline ? "min-h-0 flex-1 overflow-y-auto bg-white" : "min-h-0 flex-1 bg-slate-100"}>
+        {outline ? (
+          <p className="whitespace-pre-wrap px-4 py-3 text-sm leading-relaxed text-slate-700">
+            {citation.quote?.trim() || "Chưa có nội dung đề cương để hiển thị."}
+          </p>
+        ) : pdf ? (
           <iframe
             // key đổi theo trang để PDF viewer nhảy đúng trang khi chọn nguồn khác cùng tài liệu.
             key={`${citation.document_id}#${citation.page_number ?? ""}`}
