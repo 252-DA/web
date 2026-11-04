@@ -59,7 +59,7 @@ export async function loadQuizContext(
   access: Awaited<ReturnType<typeof deepLinkAccess>>,
   chapterId?: string,
 ) {
-  const [context, requests] = await Promise.all([
+  const [context, requests, microContentsRes] = await Promise.all([
     coreApi.canvasQuizContext<Omit<CanvasQuizContext, "requests">>(
       {
         courseId: access.flow.courseId,
@@ -72,8 +72,18 @@ export async function loadQuizContext(
       { courseId: access.flow.courseId, type: "quiz", limit: 100 },
       access.claims,
     ),
+    coreApi
+      .listMicroContents<{ items: any[] }>(access.flow.courseId, access.claims)
+      .catch(() => ({ items: [] })),
   ]);
-  return { ...context, requests };
+  const microContents = (microContentsRes.items || []).map((m: any) => ({
+    id: m.id,
+    title: m.title,
+    status: m.status,
+    videoStatus: m.videoStatus,
+    questionCount: m.questionCount ?? (m.questions?.length || 0),
+  }));
+  return { ...context, requests, microContents };
 }
 
 export function deepLinkError(error: unknown) {

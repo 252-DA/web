@@ -145,6 +145,40 @@ export async function signDeepLinkResponse(
   return signContentItems(state, items, key);
 }
 
+export type LinkedMicroContent = {
+  micro_content_id: string;
+  title: string;
+  questionCount?: number;
+};
+
+export async function signDeepLinkMicroContentResponse(
+  state: DeepLinkState,
+  microContent?: LinkedMicroContent,
+) {
+  const key = await importPKCS8(
+    await readFile(LTI_CONFIG.privateKeyPath, "utf8"),
+    "RS256",
+  );
+  const items = microContent
+    ? [
+        {
+          type: "ltiResourceLink",
+          title: microContent.title,
+          text: `Micro Content: Video bài giảng & câu hỏi củng cố (${microContent.questionCount ?? 0} câu)`,
+          url: new URL(
+            `/learn/micro-content/${microContent.micro_content_id}`,
+            LTI_CONFIG.redirectUri,
+          ).toString(),
+          custom: {
+            target_kind: "micro_content",
+            target_id: microContent.micro_content_id,
+          },
+        },
+      ]
+    : [];
+  return signContentItems(state, items, key);
+}
+
 /** LtiDeepLinkingResponse ký bằng key của tool; `items` rỗng = giảng viên huỷ. */
 export async function signContentItems(
   state: Pick<DeepLinkState, "deploymentId" | "data">,

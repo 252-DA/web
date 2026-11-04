@@ -14,7 +14,7 @@ export interface LtiSession {
   roles: string[];
   lmsCourseRefId?: string;
   resourceLinkId?: string;
-  targetKind?: "lesson" | "card" | "quiz_set" | "chat" | "video";
+  targetKind?: "lesson" | "card" | "quiz_set" | "chat" | "video" | "micro_content";
   targetId?: string | null;
   loIds: string[];
   chatbotEnabled: boolean;
