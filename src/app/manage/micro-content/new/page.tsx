@@ -29,7 +29,7 @@ export default async function NewMicroContentPage({ searchParams }: Props) {
           </p>
           <InstructorNav
             active="micro-content"
-            courseId={session.courseId}
+            courseId={session.courseId || ""}
             sid={sid}
             isAdmin={session.role === "administrator"}
           />

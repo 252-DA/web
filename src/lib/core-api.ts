@@ -82,7 +82,17 @@ type CoreMethod =
   | "ListChatConversations"
   | "GetChatConversation"
   | "DeleteChatConversation"
-  | "GetChatCatalog";
+  | "GetChatCatalog"
+  | "ListVideoAssets"
+  | "GetVideoAsset"
+  | "CreateVideoAssetUpload"
+  | "ConfirmVideoAssetUpload"
+  | "GetVideoAssetUrl"
+  | "UpdateVideoAsset"
+  | "DeleteVideoAsset"
+  | "ForkVideoAsset"
+  | "CheckVideoAssetHash"
+  | "AttachVideoAssetToMicroContent";
 
 type JsonResponse = { json?: string };
 
@@ -384,4 +394,24 @@ export const coreApi = {
     callCore<TResponse>("GetMicroContentResult", { attemptId }, claims),
   listMicroContentAttempts: <TResponse = unknown>(microContentId: string, claims: BffClaims) =>
     callCore<TResponse>("ListMicroContentAttempts", { microContentId }, claims),
+  listVideoAssets: <TResponse = unknown>(params: any, claims: BffClaims) =>
+    callCore<TResponse>("ListVideoAssets", params, claims),
+  getVideoAsset: <TResponse = unknown>(assetId: string, claims: BffClaims) =>
+    callCore<TResponse>("GetVideoAsset", { assetId }, claims),
+  createVideoAssetUpload: <TResponse = unknown>(body: any, claims: BffClaims) =>
+    callCore<TResponse>("CreateVideoAssetUpload", body, claims),
+  confirmVideoAssetUpload: <TResponse = unknown>(body: any, claims: BffClaims) =>
+    callCore<TResponse>("ConfirmVideoAssetUpload", body, claims),
+  getVideoAssetUrl: <TResponse = unknown>(body: { assetId: string; microContentId?: string }, claims: BffClaims) =>
+    callCore<TResponse>("GetVideoAssetUrl", body, claims),
+  updateVideoAsset: <TResponse = unknown>(body: any, claims: BffClaims) =>
+    callCore<TResponse>("UpdateVideoAsset", body, claims),
+  deleteVideoAsset: <TResponse = unknown>(assetId: string, claims: BffClaims) =>
+    callCore<TResponse>("DeleteVideoAsset", { assetId }, claims),
+  forkVideoAsset: <TResponse = unknown>(assetId: string, claims: BffClaims) =>
+    callCore<TResponse>("ForkVideoAsset", { assetId }, claims),
+  checkVideoAssetHash: <TResponse = unknown>(fileHash: string, claims: BffClaims) =>
+    callCore<TResponse>("CheckVideoAssetHash", { fileHash }, claims),
+  attachVideoAssetToMicroContent: <TResponse = unknown>(body: { microContentId: string; assetId: string | null }, claims: BffClaims) =>
+    callCore<TResponse>("AttachVideoAssetToMicroContent", body, claims),
 };
