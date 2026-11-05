@@ -46,6 +46,8 @@ type CoreMethod =
   | "ListEssaysForReview"
   | "GradeEssayAnswer"
   | "RetryEssayGrading"
+  | "GetLearnerSummary"
+  | "GetCourseMastery"
   | "CreateContentGenerationRequest"
   | "ListContentGenerationRequests"
   | "ListModelBindings"
@@ -285,6 +287,10 @@ export const coreApi = {
   ) => callCore<TResponse>("GradeEssayAnswer", body, claims),
   retryEssayGrading: <TResponse = unknown>(attemptId: string, claims: BffClaims) =>
     callCore<TResponse>("RetryEssayGrading", { attemptId }, claims),
+  learnerSummary: <TResponse = unknown>(body: { courseId: string; userId?: string }, claims: BffClaims) =>
+    callCore<TResponse>("GetLearnerSummary", body, claims),
+  courseMastery: <TResponse = unknown>(courseId: string, claims: BffClaims) =>
+    callCore<TResponse>("GetCourseMastery", { courseId }, claims),
   createContentGenerationRequest: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
     callCore<TResponse>("CreateContentGenerationRequest", body, claims),
   listContentGenerationRequests: <TResponse = unknown>(
