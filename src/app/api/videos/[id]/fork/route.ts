@@ -18,7 +18,11 @@ export async function POST(
   const { id } = await params;
   try {
     const claims = claimsFromSession(activeSession.session);
-    const result = await coreApi.forkVideoAsset(id, claims);
+    // Nút "Fork AI" trong kho video nhân bản sang khoá học đang mở.
+    const result = await coreApi.forkVideoAsset(
+      { assetId: id, targetCourseId: activeSession.session.courseId },
+      claims,
+    );
     return NextResponse.json(result);
   } catch (error) {
     const status =

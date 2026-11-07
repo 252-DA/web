@@ -16,22 +16,30 @@ const DEV_SESSION = {
   chatbotEnabled: true,
 };
 
-async function ensureDevSession() {
+// Ai mở được trang này cũng dùng được phiên giảng viên dựng sẵn qua
+// ?sid=dev-session, nên chỉ bật khi đặt rõ DEMO_PORTAL_SESSION=true trên máy
+// không mở ra ngoài. NODE_ENV không đủ: web dev cũng chạy qua tunnel công khai.
+const DEMO_SESSION_ENABLED = process.env.DEMO_PORTAL_SESSION === "true";
+const DEMO_SID = "dev-session";
+
+async function ensureDevSession(): Promise<string | null> {
   try {
-    const key = "session:lms:dev-session";
+    const key = `session:lms:${DEMO_SID}`;
     const existing = await redis.get(key);
     if (!existing) {
       await redis.set(key, JSON.stringify(DEV_SESSION), "EX", 7 * 24 * 3600);
     }
+    return DEMO_SID;
   } catch (err) {
     console.error("[dev-session] Failed to ensure dev session:", err);
+    return null;
   }
 }
 
 export default async function HomePage() {
-  await ensureDevSession();
-
-  const sid = "dev-session";
+  const sid = DEMO_SESSION_ENABLED ? await ensureDevSession() : null;
+  const withSid = (href: string) =>
+    sid ? `${href}${href.includes("?") ? "&" : "?"}sid=${sid}` : href;
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-900 via-slate-950 to-slate-950 text-slate-100 selection:bg-sky-500 selection:text-white">
@@ -60,13 +68,13 @@ export default async function HomePage() {
 
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
             <Link
-              href={`/manage/micro-content?sid=${sid}`}
+              href={withSid("/manage/micro-content")}
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-600 px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-sky-500/25 hover:from-sky-400 hover:to-indigo-500 transition-all hover:scale-[1.02]"
             >
               🚀 Mở Không Gian Quản Lý (Giảng Viên)
             </Link>
             <Link
-              href={`/manage/media?sid=${sid}`}
+              href={withSid("/manage/media")}
               className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-800/80 px-6 py-3.5 text-sm font-semibold text-slate-200 hover:bg-slate-700/80 hover:text-white transition-all backdrop-blur"
             >
               📚 Xem Kho Học Liệu Video (DAM)
@@ -78,7 +86,7 @@ export default async function HomePage() {
         <div className="mt-16 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {/* Card 1: Micro-Content Studio */}
           <Link
-            href={`/manage/micro-content?sid=${sid}`}
+            href={withSid("/manage/micro-content")}
             className="group relative rounded-2xl border border-slate-800 bg-slate-900/50 p-6 backdrop-blur transition-all hover:border-sky-500/50 hover:bg-slate-900/80 hover:shadow-xl hover:shadow-sky-500/10"
           >
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-sky-500/10 text-sky-400 group-hover:scale-110 transition-transform text-2xl">
@@ -97,7 +105,7 @@ export default async function HomePage() {
 
           {/* Card 2: Video Asset DAM */}
           <Link
-            href={`/manage/media?sid=${sid}`}
+            href={withSid("/manage/media")}
             className="group relative rounded-2xl border border-slate-800 bg-slate-900/50 p-6 backdrop-blur transition-all hover:border-indigo-500/50 hover:bg-slate-900/80 hover:shadow-xl hover:shadow-indigo-500/10"
           >
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-500/10 text-indigo-400 group-hover:scale-110 transition-transform text-2xl">
@@ -116,7 +124,7 @@ export default async function HomePage() {
 
           {/* Card 3: AI Video Studio */}
           <Link
-            href={`/manage/micro-content/19d07719-aead-457a-8893-885130fe99d3/edit?tab=video&sid=${sid}`}
+            href={withSid("/manage/micro-content/19d07719-aead-457a-8893-885130fe99d3/edit?tab=video")}
             className="group relative rounded-2xl border border-slate-800 bg-slate-900/50 p-6 backdrop-blur transition-all hover:border-purple-500/50 hover:bg-slate-900/80 hover:shadow-xl hover:shadow-purple-500/10"
           >
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-purple-500/10 text-purple-400 group-hover:scale-110 transition-transform text-2xl">
@@ -135,7 +143,7 @@ export default async function HomePage() {
 
           {/* Card 4: Learner Experience */}
           <Link
-            href={`/learn/micro-content/19d07719-aead-457a-8893-885130fe99d3?sid=${sid}`}
+            href={withSid("/learn/micro-content/19d07719-aead-457a-8893-885130fe99d3")}
             className="group relative rounded-2xl border border-slate-800 bg-slate-900/50 p-6 backdrop-blur transition-all hover:border-emerald-500/50 hover:bg-slate-900/80 hover:shadow-xl hover:shadow-emerald-500/10"
           >
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400 group-hover:scale-110 transition-transform text-2xl">
@@ -154,7 +162,7 @@ export default async function HomePage() {
 
           {/* Card 5: Instructor Dashboard */}
           <Link
-            href={`/manage/dashboard?sid=${sid}`}
+            href={withSid("/manage/dashboard")}
             className="group relative rounded-2xl border border-slate-800 bg-slate-900/50 p-6 backdrop-blur transition-all hover:border-amber-500/50 hover:bg-slate-900/80 hover:shadow-xl hover:shadow-amber-500/10"
           >
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-amber-500/10 text-amber-400 group-hover:scale-110 transition-transform text-2xl">

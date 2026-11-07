@@ -408,8 +408,8 @@ export const coreApi = {
     callCore<TResponse>("UpdateVideoAsset", body, claims),
   deleteVideoAsset: <TResponse = unknown>(assetId: string, claims: BffClaims) =>
     callCore<TResponse>("DeleteVideoAsset", { assetId }, claims),
-  forkVideoAsset: <TResponse = unknown>(assetId: string, claims: BffClaims) =>
-    callCore<TResponse>("ForkVideoAsset", { assetId }, claims),
+  forkVideoAsset: <TResponse = unknown>(body: { assetId: string; targetCourseId?: string }, claims: BffClaims) =>
+    callCore<TResponse>("ForkVideoAsset", body, claims),
   checkVideoAssetHash: <TResponse = unknown>(fileHash: string, claims: BffClaims) =>
     callCore<TResponse>("CheckVideoAssetHash", { fileHash }, claims),
   attachVideoAssetToMicroContent: <TResponse = unknown>(body: { microContentId: string; assetId: string | null }, claims: BffClaims) =>
