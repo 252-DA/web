@@ -19,6 +19,7 @@ const CONTEXT_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/context";
 const DEPLOYMENT_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/deployment_id";
 const RESOURCE_LINK_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/resource_link";
 const AGS_CLAIM = "https://purl.imsglobal.org/spec/lti-ags/claim/endpoint";
+const NRPS_CLAIM = "https://purl.imsglobal.org/spec/lti-nrps/claim/namesroleservice";
 const ROLES_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/roles";
 type CookieSameSite = "lax" | "strict" | "none";
 type LaunchSyncResponse = {
@@ -279,6 +280,19 @@ export async function POST(request: NextRequest) {
     const ags = (payload[AGS_CLAIM] || {}) as Record<string, unknown>;
     const agsLineItemUrl = typeof ags.lineitem === "string" ? ags.lineitem : undefined;
 
+    // Claim NRPS chỉ có khi tool đã có scope contextmembership.readonly và launch
+    // diễn ra sau khi scope được thêm; core-api lưu URL để đọc danh sách lớp.
+    const nrpsClaim = (payload[NRPS_CLAIM] || {}) as Record<string, unknown>;
+    const nrps =
+      typeof nrpsClaim.context_memberships_url === "string" && nrpsClaim.context_memberships_url
+        ? {
+            contextMembershipsUrl: nrpsClaim.context_memberships_url,
+            serviceVersions: Array.isArray(nrpsClaim.service_versions)
+              ? nrpsClaim.service_versions.map(String)
+              : undefined,
+          }
+        : undefined;
+
     // ── Sync with core-api ──
     const sync = await coreApi.launchSync<LaunchSyncResponse>({
       lmsType: LTI_CONFIG.lmsType,
@@ -299,6 +313,7 @@ export async function POST(request: NextRequest) {
           ? Number(custom.ags_score_maximum)
           : undefined,
       agsLabel: typeof resourceLink.title === "string" ? resourceLink.title : contextTitle,
+      nrps,
     });
 
     // ── Set Redis session ──

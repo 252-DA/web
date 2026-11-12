@@ -66,7 +66,11 @@ export function QuizReport({ report }: { report: StaffQuizResults }) {
 
         <section className="grid gap-3 sm:grid-cols-3">
           {[
-            ["Sinh viên đã làm", summary.students],
+            // Chưa có danh sách lớp (classSize 0) thì chỉ đếm người đã làm, không hiện "x/0".
+            [
+              "Sinh viên đã làm",
+              summary.classSize ? `${summary.attemptedInClass}/${summary.classSize}` : summary.students,
+            ],
             ["Lượt nộp", summary.submissions],
             ["Điểm cao nhất trung bình", summary.averageBest === null ? "—" : `${summary.averageBest}/100`],
           ].map(([label, value]) => (
@@ -77,7 +81,7 @@ export function QuizReport({ report }: { report: StaffQuizResults }) {
           ))}
         </section>
 
-        {!summary.students ? (
+        {!report.students.length ? (
           <p className="rounded-xl border border-dashed border-slate-300 bg-white p-6 text-center text-sm text-slate-500">
             Chưa có sinh viên nộp bài. Nhớ Publish bài tập trên Canvas để sinh viên thấy bài.
           </p>
@@ -104,6 +108,11 @@ export function QuizReport({ report }: { report: StaffQuizResults }) {
 
             <section className="rounded-xl border border-slate-200 bg-white p-4">
               <h2 className="font-semibold">Sinh viên</h2>
+              {!summary.students && (
+                <p className="mt-1 text-xs text-slate-500">
+                  Chưa có sinh viên nộp bài. Nhớ Publish bài tập trên Canvas để sinh viên thấy bài.
+                </p>
+              )}
               <div className="mt-3 overflow-x-auto">
                 <table className="w-full min-w-[36rem] text-left text-sm">
                   <thead className="text-xs text-slate-500">
@@ -119,16 +128,31 @@ export function QuizReport({ report }: { report: StaffQuizResults }) {
                   <tbody>
                     {report.students.map((s) => (
                       <tr key={s.userId} className="border-b border-slate-100 last:border-0">
-                        <td className="py-2 pr-3">{s.name}</td>
-                        <td className="py-2 pr-3 tabular-nums">{s.attempts}</td>
-                        <td className="py-2 pr-3 font-semibold tabular-nums">{s.bestScore}</td>
-                        <td className="py-2 pr-3 tabular-nums">{s.latestScore}</td>
-                        <td className="py-2 pr-3 text-slate-600">{time.format(new Date(s.lastAttemptedAt))}</td>
-                        <td className="py-2">
-                          <span className={`rounded px-2 py-0.5 text-xs font-medium ${GRADE_SYNC[s.sync].tone}`}>
-                            {GRADE_SYNC[s.sync].label}
-                          </span>
+                        <td className="py-2 pr-3">
+                          {s.name}
+                          {!s.inClass && (
+                            <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
+                              không còn trong lớp
+                            </span>
+                          )}
                         </td>
+                        <td className="py-2 pr-3 tabular-nums">{s.attempts}</td>
+                        {s.bestScore === null || s.latestScore === null || s.lastAttemptedAt === null || s.sync === null ? (
+                          <td colSpan={4} className="py-2 text-slate-400">
+                            Chưa làm
+                          </td>
+                        ) : (
+                          <>
+                            <td className="py-2 pr-3 font-semibold tabular-nums">{s.bestScore}</td>
+                            <td className="py-2 pr-3 tabular-nums">{s.latestScore}</td>
+                            <td className="py-2 pr-3 text-slate-600">{time.format(new Date(s.lastAttemptedAt))}</td>
+                            <td className="py-2">
+                              <span className={`rounded px-2 py-0.5 text-xs font-medium ${GRADE_SYNC[s.sync].tone}`}>
+                                {GRADE_SYNC[s.sync].label}
+                              </span>
+                            </td>
+                          </>
+                        )}
                       </tr>
                     ))}
                   </tbody>

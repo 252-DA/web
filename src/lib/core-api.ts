@@ -21,6 +21,7 @@ type CoreMethod =
   | "GetDocumentFileUrl"
   | "DeleteDocument"
   | "SyncDocumentsFromCanvas"
+  | "GetCanvasSyncStatus"
   | "UpdateDocumentPlacement"
   | "ListLessons"
   | "GetLesson"
@@ -244,6 +245,8 @@ export const coreApi = {
     callCore<TResponse>("DeleteDocument", { documentId }, claims),
   syncDocumentsFromCanvas: <TResponse = unknown>(courseId: string, claims: BffClaims) =>
     callCore<TResponse>("SyncDocumentsFromCanvas", { courseId }, claims),
+  getCanvasSyncStatus: <TResponse = unknown>(courseId: string, claims: BffClaims) =>
+    callCore<TResponse>("GetCanvasSyncStatus", { courseId }, claims),
   updateDocumentPlacement: <TResponse = unknown>(
     documentId: string,
     placement: { role?: string; chapterCode?: string },

@@ -53,6 +53,41 @@ try {
   const settings = deepLinkSettings(payload, "https://canvas.test");
   assert.equal(settings.moduleId, "17");
   assert.equal(settings.returnUrl, returnUrl);
+  // Custom claim canvas_module_id: thắng ?data=JWT khi là id số...
+  const withCustom = (custom, overrides = {}) => ({
+    ...payload,
+    [`${LTI_CLAIM}custom`]: custom,
+    [`${DL_CLAIM}deep_linking_settings`]: {
+      ...payload[`${DL_CLAIM}deep_linking_settings`],
+      ...overrides,
+    },
+  });
+  assert.equal(
+    deepLinkSettings(withCustom({ canvas_module_id: "23" }), "https://canvas.test").moduleId,
+    "23",
+  );
+  // ...và dùng được cả khi return URL không mang module nào.
+  assert.equal(
+    deepLinkSettings(
+      withCustom(
+        { canvas_module_id: "23" },
+        { deep_link_return_url: "https://canvas.test/courses/3/deep_linking_response" },
+      ),
+      "https://canvas.test",
+    ).moduleId,
+    "23",
+  );
+  // Biến chưa mở rộng (Deep Linking từ module_menu_modal) thì lùi về ?data=JWT.
+  for (const unexpanded of ["$Canvas.module.id", "", "abc", "0", undefined]) {
+    assert.equal(
+      deepLinkSettings(withCustom({ canvas_module_id: unexpanded }), "https://canvas.test").moduleId,
+      "17",
+    );
+  }
+  assert.equal(
+    deepLinkSettings(withCustom(undefined), "https://canvas.test").moduleId,
+    "17",
+  );
   const malformed = (overrides) => ({
     ...payload,
     [`${DL_CLAIM}deep_linking_settings`]: {

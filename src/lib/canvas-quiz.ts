@@ -132,17 +132,25 @@ export type StaffQuizResults = {
     averageScore: number | null;
   }>;
   byLo: Array<{ lo_id: string; code: string; statement: string; questions: number; correctRate: number | null }>;
+  /** Cả lớp theo danh sách lớp Canvas; người chưa làm bài có attempts 0 và các điểm rỗng. */
   students: Array<{
     userId: string;
     name: string;
     attempts: number;
-    bestScore: number;
-    latestScore: number;
-    lastAttemptedAt: string;
-    sync: GradeSync;
+    bestScore: number | null;
+    latestScore: number | null;
+    lastAttemptedAt: string | null;
+    sync: GradeSync | null;
+    /** false: đã làm bài nhưng không còn trong lớp. */
+    inClass: boolean;
   }>;
   summary: {
+    /** Số sinh viên đã nộp ít nhất một lượt, kể cả người không còn trong lớp. */
     students: number;
+    /** Quy mô lớp: sinh viên đang học. */
+    classSize: number;
+    /** Số sinh viên đang học đã làm bài (tử số của "đã làm x/n"). */
+    attemptedInClass: number;
     submissions: number;
     averageBest: number | null;
     waitingForPublish: number;

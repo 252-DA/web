@@ -29,11 +29,43 @@ type DocumentSummary = {
 
 type Chapter = { code: string; title: string };
 
+type CanvasSyncRun = {
+  status: "running" | "success" | "error";
+  trigger: "launch" | "sweep" | "manual";
+  started_at: string;
+  finished_at: string | null;
+  counts: Record<string, number>;
+  error: string | null;
+};
+
+type CanvasSyncStatus = {
+  last_run: CanvasSyncRun | null;
+  last_success_at: string | null;
+  token: { checked_at: string; ok: boolean; http_status: number | null; message: string } | null;
+  /** Danh sách lớp (NRPS); null khi core-api chưa đọc được. */
+  roster?: { last_run: CanvasSyncRun | null; last_success_at: string | null; learners: number | null } | null;
+};
+
 const ROLE_LABEL: Record<DocumentRole, string> = {
   lecture: "Bài giảng",
   reference: "Tham khảo",
   exercise: "Bài tập",
 };
+
+const SYNC_TIME_FORMAT = new Intl.DateTimeFormat("vi-VN", {
+  day: "2-digit",
+  month: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZone: "Asia/Ho_Chi_Minh",
+});
+
+/** "12/11 14:30" theo giờ Việt Nam. */
+function syncTime(iso: string) {
+  const part = (type: string) => SYNC_TIME_FORMAT.formatToParts(new Date(iso)).find((p) => p.type === type)?.value ?? "";
+  return `${part("day")}/${part("month")} ${part("hour")}:${part("minute")}`;
+}
 
 function first(value?: string | string[]) {
   return Array.isArray(value) ? value[0] : value;
@@ -79,17 +111,23 @@ export default async function DocumentsPage({ searchParams }: Props) {
 
   let documents: DocumentSummary[] = [];
   let chapters: Chapter[] = [];
+  let syncStatus: CanvasSyncStatus | null = null;
   let error = "";
   try {
-    [documents, chapters] = await Promise.all([
+    [documents, chapters, syncStatus] = await Promise.all([
       coreApi.listDocuments<DocumentSummary[]>({ courseId, limit: 100 }, claims),
       coreApi.listChapters<Chapter[]>(courseId, claims).catch(() => []),
+      coreApi.getCanvasSyncStatus<CanvasSyncStatus>(courseId, claims).catch(() => null),
     ]);
   } catch (err) {
     error = err instanceof Error ? err.message : "Không thể tải danh sách tài liệu.";
   }
   const actionError = first(sp.reviewError);
   const actionSuccess = first(sp.reviewSuccess);
+  const lastRun = syncStatus?.last_run ?? null;
+  const tokenError = syncStatus?.token && !syncStatus.token.ok ? syncStatus.token.message : null;
+  const roster = syncStatus?.roster ?? null;
+  const rosterRun = roster?.last_run ?? null;
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950">
@@ -120,12 +158,46 @@ export default async function DocumentsPage({ searchParams }: Props) {
               của từng file được xác định theo tên module, tên file hoặc nội dung.
             </p>
           </div>
-          <form method="post" action={withSid("/api/documents/canvas-sync", sid)}>
-            <input type="hidden" name="courseId" value={courseId} />
-            <button className="rounded border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700">
-              Đồng bộ từ Canvas
-            </button>
-          </form>
+          <div className="flex flex-col items-end gap-2 text-right">
+            {tokenError && <p className="text-sm font-medium text-red-700">Token Canvas lỗi: {tokenError}</p>}
+            {lastRun?.status === "running" && <p className="text-sm text-slate-600">Đang đồng bộ…</p>}
+            {lastRun?.status === "success" && (
+              <p className="text-sm text-slate-600">
+                Đồng bộ lần cuối: {syncTime(lastRun.finished_at ?? lastRun.started_at)} ·{" "}
+                {(lastRun.counts.created ?? 0) + (lastRun.counts.updated ?? 0)} tệp mới/cập nhật
+              </p>
+            )}
+            {lastRun?.status === "error" && (
+              <div className="text-sm">
+                <p className="text-red-700">
+                  Đồng bộ lỗi lúc {syncTime(lastRun.finished_at ?? lastRun.started_at)}
+                  {lastRun.error ? `: ${lastRun.error}` : ""}
+                </p>
+                {syncStatus?.last_success_at && (
+                  <p className="text-slate-500">Thành công gần nhất: {syncTime(syncStatus.last_success_at)}</p>
+                )}
+              </div>
+            )}
+            {rosterRun?.status === "error" && (
+              <p className="text-sm text-red-700">
+                Danh sách lớp lỗi lúc {syncTime(rosterRun.finished_at ?? rosterRun.started_at)}
+                {rosterRun.error ? `: ${rosterRun.error}` : ""}
+                {roster?.last_success_at ? ` (lần thành công gần nhất ${syncTime(roster.last_success_at)})` : ""}
+              </p>
+            )}
+            {rosterRun?.status !== "error" && roster?.last_success_at && (
+              <p className="text-sm text-slate-600">
+                Danh sách lớp: {roster.learners ?? rosterRun?.counts.learners ?? 0} sinh viên · đồng bộ{" "}
+                {syncTime(roster.last_success_at)}
+              </p>
+            )}
+            <form method="post" action={withSid("/api/documents/canvas-sync", sid)}>
+              <input type="hidden" name="courseId" value={courseId} />
+              <button className="rounded border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700">
+                {lastRun?.status === "error" || rosterRun?.status === "error" ? "Thử lại" : "Đồng bộ từ Canvas"}
+              </button>
+            </form>
+          </div>
         </div>
 
         <div className="overflow-hidden rounded border border-slate-200 bg-white">

@@ -41,13 +41,24 @@ export function deepLinkSettings(payload: JWTPayload, platformUrl: string) {
     throw new Error("Địa chỉ trả về không thuộc Canvas đã cấu hình.");
   if (settings.data !== undefined && typeof settings.data !== "string")
     throw new Error("Deep Linking data không hợp lệ.");
+  // Custom field canvas_module_id=$Canvas.module.id (scripts/setup_canvas_lti.rb)
+  // do Canvas ký trong id_token. Canvas chỉ mở rộng nó khi launch từ một module
+  // item, không có ở launch Deep Linking của module_menu_modal (khi đó biến giữ
+  // nguyên chuỗi "$Canvas.module.id"), nên chỉ nhận khi là id số.
+  const custom = payload[`${LTI_CLAIM}custom`];
+  const claimed =
+    custom && typeof custom === "object" && !Array.isArray(custom)
+      ? (custom as Record<string, unknown>).canvas_module_id
+      : undefined;
   // Canvas embeds its one-use module selection in ?data=JWT. The outer LTI
   // signature authenticates this exact URL. Decode only to identify the module;
   // return the original URL untouched so Canvas verifies its own opaque token.
   const opaque = url.searchParams.get("data");
-  const moduleId = opaque
-    ? decodeJwt(opaque).context_module_id
-    : url.searchParams.get("context_module_id");
+  const moduleId = /^[1-9]\d*$/.test(String(claimed ?? ""))
+    ? claimed
+    : opaque
+      ? decodeJwt(opaque).context_module_id
+      : url.searchParams.get("context_module_id");
   if (!/^[1-9]\d*$/.test(String(moduleId ?? "")))
     throw new Error(
       "Hãy mở Sinh quiz bằng DA từ menu ⋮ của một module Canvas.",
