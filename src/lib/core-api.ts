@@ -43,6 +43,7 @@ type CoreMethod =
   | "StartQuizSet"
   | "SubmitQuizSet"
   | "GetQuizSetResults"
+  | "GetQuizSubmission"
   | "ListQuizAttempts"
   | "ListEssaysForReview"
   | "GradeEssayAnswer"
@@ -197,11 +198,16 @@ async function callCore<TResponse>(
 export const coreApi = {
   canvasQuizContext: <T = unknown>(body: unknown, claims: BffClaims) => callCore<T>("GetCanvasQuizContext", body, claims),
   createQuizSet: <T = unknown>(body: unknown, claims: BffClaims) => callCore<T>("CreateQuizSet", body, claims),
-  getQuizSet: <T = unknown>(quizSetId: string, claims: BffClaims) => callCore<T>("GetQuizSet", { quizSetId }, claims),
+  // resourceLinkId: bài tập Canvas đang mở, để cài đặt (điểm, hạn, số lần làm) theo Canvas.
+  getQuizSet: <T = unknown>(quizSetId: string, claims: BffClaims, resourceLinkId?: string) =>
+    callCore<T>("GetQuizSet", { quizSetId, resourceLinkId }, claims),
   quizBuilderContext: <T = unknown>(body: { courseId: string; loIds?: string[] }, claims: BffClaims) => callCore<T>("GetQuizBuilderContext", body, claims),
   startQuizSet: <T = unknown>(body: unknown, claims: BffClaims) => callCore<T>("StartQuizSet", body, claims),
   submitQuizSet: <T = unknown>(body: unknown, claims: BffClaims) => callCore<T>("SubmitQuizSet", body, claims),
-  quizSetResults: <T = unknown>(quizSetId: string, claims: BffClaims) => callCore<T>("GetQuizSetResults", { quizSetId }, claims),
+  quizSetResults: <T = unknown>(quizSetId: string, claims: BffClaims, resourceLinkId?: string) =>
+    callCore<T>("GetQuizSetResults", { quizSetId, resourceLinkId }, claims),
+  quizSubmission: <T = unknown>(quizSetId: string, submissionId: string, claims: BffClaims) =>
+    callCore<T>("GetQuizSubmission", { quizSetId, submissionId }, claims),
   launchSync: <TResponse = unknown>(body: unknown) =>
     callCore<TResponse>("LaunchSync", body, {
       sub: "lti-bootstrap",

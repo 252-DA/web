@@ -3,7 +3,19 @@ import { randomUUID } from "crypto";
 import { verifyPlatformJwt } from "@/lib/lti-platform-jwt";
 import { redis } from "@/lib/redis";
 import { LTI_CONFIG, isKnownDeployment } from "@/lib/lti";
-import { LtiSession, SESSION_TTL, sessionKey } from "@/lib/session";
+import {
+  LtiSession,
+  SESSION_MAX_AGE,
+  SESSION_TTL,
+  sessionKey,
+  sessionTtlFor,
+} from "@/lib/session";
+import { mapRoles, UnsupportedRoleError } from "@/lib/lti-roles";
+import {
+  canViewSubmissions,
+  parseSubmissionViewUri,
+  submissionViewPath,
+} from "@/lib/lti-submission-view";
 import { coreApi, CoreApiError } from "@/lib/core-api";
 import { deepLinkSettings, deepLinkKey, LTI_CLAIM, type DeepLinkState } from "@/lib/lti-deep-link";
 import {
@@ -21,6 +33,7 @@ const RESOURCE_LINK_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/resource_
 const AGS_CLAIM = "https://purl.imsglobal.org/spec/lti-ags/claim/endpoint";
 const NRPS_CLAIM = "https://purl.imsglobal.org/spec/lti-nrps/claim/namesroleservice";
 const ROLES_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/roles";
+const TARGET_LINK_URI_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/target_link_uri";
 type CookieSameSite = "lax" | "strict" | "none";
 type LaunchSyncResponse = {
   internalUserId: string;
@@ -28,9 +41,9 @@ type LaunchSyncResponse = {
   lmsCourseRefId?: string;
   courseRole: "instructor" | "learner" | "ta" | "observer";
   resourceLinkId?: string;
+  /** Thời gian làm của bài kiểm tra đang mở (phút), để phiên thi sống đủ lâu. */
+  examTimeLimitMinutes?: number;
 };
-type PlatformRole = "instructor" | "learner" | "administrator";
-type CourseRole = "instructor" | "learner" | "ta" | "observer";
 
 function parsePipeCustom(custom: string): Record<string, string> {
   const parsed: Record<string, string> = {};
@@ -62,26 +75,6 @@ function parseRoles(value: unknown): string[] {
     return value.map(String);
   }
   return typeof value === "string" ? [value] : [];
-}
-
-function mapRoles(roles: string[]): { role: PlatformRole; courseRole: CourseRole } {
-  const joined = roles.join(" ");
-  if (/Administrator/i.test(joined)) {
-    return { role: "administrator", courseRole: "instructor" };
-  }
-  if (/Instructor|Faculty|Staff/i.test(joined)) {
-    return { role: "instructor", courseRole: "instructor" };
-  }
-  if (/TeachingAssistant|Teaching Assistant|TA/i.test(joined)) {
-    return { role: "instructor", courseRole: "ta" };
-  }
-  if (/Observer|Mentor/i.test(joined)) {
-    return { role: "learner", courseRole: "observer" };
-  }
-  if (/Learner|Student|Member/i.test(joined)) {
-    return { role: "learner", courseRole: "learner" };
-  }
-  throw new CoreApiError(403, "Unsupported LTI role");
 }
 
 function parseTargetKind(value: string | undefined): LtiSession["targetKind"] | undefined {
@@ -261,8 +254,34 @@ export async function POST(request: NextRequest) {
     const resourceLink = (payload[RESOURCE_LINK_CLAIM] || {}) as Record<string, unknown>;
     const resourceLinkId =
       typeof resourceLink.id === "string" ? resourceLink.id : custom.resource_link_id;
-    const targetKind = isDeepLink ? undefined : parseTargetKind(custom.target_kind);
-    const targetId = isDeepLink ? null : custom.target_id || custom.lesson_id || null;
+    // SpeedGrader mở bài nộp basic_lti_launch bằng URL trong điểm AGS; URL đó
+    // đi trong target_link_uri đã ký và chỉ giảng viên/trợ giảng được xem.
+    const submissionView =
+      messageType === "LtiResourceLinkRequest"
+        ? parseSubmissionViewUri(
+            payload[TARGET_LINK_URI_CLAIM],
+            new URL(LTI_CONFIG.redirectUri).origin,
+          )
+        : null;
+    if (submissionView && !canViewSubmissions(mappedRole.role, mappedRole.courseRole)) {
+      return new Response(
+        '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+          '<body style="font:14px system-ui,sans-serif;margin:0;padding:24px;color:#334155">' +
+          "<p>Trang này là bài làm của sinh viên, chỉ giảng viên và trợ giảng của khóa học xem được.</p>" +
+          "<p>Để làm hoặc xem lại bài, hãy mở bài tập từ trang Assignment trong Canvas.</p></body>",
+        { status: 403, headers: { "Content-Type": "text/html; charset=utf-8" } }
+      );
+    }
+    const targetKind = submissionView
+      ? "quiz_set"
+      : isDeepLink
+        ? undefined
+        : parseTargetKind(custom.target_kind);
+    const targetId = submissionView
+      ? submissionView.quizSetId
+      : isDeepLink
+        ? null
+        : custom.target_id || custom.lesson_id || null;
 
     // Nút chat ở thanh trên của Canvas (placement top_navigation) hiện ở mọi trang,
     // kể cả dashboard hay trang tài khoản không thuộc khóa học nào. Chat theo khóa
@@ -303,9 +322,12 @@ export async function POST(request: NextRequest) {
       courseRole: mappedRole.courseRole,
       lmsContextId,
       contextTitle,
-      resourceLinkId,
-      targetKind,
-      targetId,
+      // Đường xem bài làm không phải một Assignment của sinh viên: không ghi
+      // resource link hay line item; core-api kiểm tra quiz thuộc khóa học khi
+      // trả bài làm.
+      resourceLinkId: submissionView ? undefined : resourceLinkId,
+      targetKind: submissionView ? undefined : targetKind,
+      targetId: submissionView ? undefined : targetId,
       customClaims: custom,
       agsLineItemUrl,
       agsScoreMaximum:
@@ -317,6 +339,9 @@ export async function POST(request: NextRequest) {
     });
 
     // ── Set Redis session ──
+    // Phiên thi sống tối thiểu bằng thời gian làm + 10 phút; mọi phiên được gia
+    // hạn trượt mỗi request (readLtiSession).
+    const ttlSeconds = sessionTtlFor(sync.examTimeLimitMinutes);
     const session: LtiSession = {
       internalUserId: sync.internalUserId,
       lmsType: LTI_CONFIG.lmsType,
@@ -332,8 +357,11 @@ export async function POST(request: NextRequest) {
       resourceLinkId: sync.resourceLinkId,
       targetKind,
       targetId,
+      ...(submissionView ? { submissionId: submissionView.submissionId } : {}),
       loIds,
       chatbotEnabled,
+      ttlSeconds,
+      issuedAt: Math.floor(Date.now() / 1000),
     };
 
     const sid = randomUUID();
@@ -346,18 +374,16 @@ export async function POST(request: NextRequest) {
       const flow: AssetProcessorFlow = { ...processorLinking, userId: session.internalUserId, courseId: session.courseId };
       await redis.setex(assetProcessorKey(flowId), SESSION_TTL, JSON.stringify(flow));
     }
-    await redis.setex(
-      sessionKey(sid),
-      SESSION_TTL,
-      JSON.stringify(session)
-    );
+    await redis.setex(sessionKey(sid), ttlSeconds, JSON.stringify(session));
 
     // ── Set session cookie ──
     const sameSite = ltiCookieSameSite();
     const secure = ltiCookieSecure(sameSite);
     const submissionClaim = (payload[`${LTI_CLAIM}submission`] || {}) as { id?: unknown };
     const redirectPath =
-      processorLinking
+      submissionView
+        ? submissionViewPath(submissionView.quizSetId, submissionView.submissionId)
+        : processorLinking
         ? "/lti/asset-processor"
         : isProcessorSettings
           ? `/lti/asset-processor?processor=${encodeURIComponent(custom[PROCESSOR_CUSTOM_KEY] || "")}`
@@ -391,7 +417,9 @@ export async function POST(request: NextRequest) {
       httpOnly: true,
       secure,
       sameSite,
-      maxAge: SESSION_TTL,
+      // Cookie không gia hạn được lúc render, nên sống tới trần của phiên; Redis
+      // mới quyết định phiên còn hiệu lực (gia hạn trượt trong readLtiSession).
+      maxAge: SESSION_MAX_AGE,
       path: "/",
     });
 
@@ -407,7 +435,16 @@ export async function POST(request: NextRequest) {
     return response;
   } catch (err: unknown) {
     console.error("[lti/launch] error:", err instanceof CoreApiError ? err.body : errorMessage(err));
-    const status = err instanceof CoreApiError ? (err.status === 403 || err.status === 7 ? 403 : err.status >= 500 ? 502 : 400) : 400;
+    const status =
+      err instanceof UnsupportedRoleError
+        ? 403
+        : err instanceof CoreApiError
+          ? err.status === 403 || err.status === 7
+            ? 403
+            : err.status >= 500
+              ? 502
+              : 400
+          : 400;
     return new Response(
       JSON.stringify({ error: "LTI launch failed", detail: errorMessage(err) }),
       { status, headers: { "Content-Type": "application/json" } }

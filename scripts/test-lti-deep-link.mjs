@@ -119,6 +119,70 @@ try {
       ),
     /module/,
   );
+  // Mở từ trang Assignments: Canvas không gắn module. Chấp nhận khi placement
+  // (trong ?data=JWT đã ký) hoặc canvas_assignment_id cho thấy đúng là trang đó.
+  const unsignedData = (claims) =>
+    `${Buffer.from('{"alg":"HS256"}').toString("base64url")}.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.opaque`;
+  const assignmentsReturn = (claims) =>
+    `https://canvas.test/courses/3/deep_linking_response?data=${unsignedData(claims)}`;
+  const noModule = deepLinkSettings(
+    malformed({
+      deep_link_return_url: assignmentsReturn({ placement: "course_assignments_menu" }),
+    }),
+    "https://canvas.test",
+  );
+  assert.equal(noModule.moduleId, undefined);
+  assert.ok(!("moduleId" in noModule), "moduleId vắng hẳn, không phải chuỗi 'undefined'");
+  assert.equal(noModule.deploymentId, "deployment-1");
+  assert.equal(
+    deepLinkSettings(
+      malformed({
+        deep_link_return_url: assignmentsReturn({ placement: "assignment_selection" }),
+      }),
+      "https://canvas.test",
+    ).moduleId,
+    undefined,
+  );
+  assert.equal(
+    deepLinkSettings(
+      withCustom(
+        { canvas_assignment_id: "42" },
+        { deep_link_return_url: "https://canvas.test/courses/3/deep_linking_response" },
+      ),
+      "https://canvas.test",
+    ).moduleId,
+    undefined,
+  );
+  // Có cả module lẫn placement Assignment thì vẫn lấy module.
+  assert.equal(
+    deepLinkSettings(
+      malformed({
+        deep_link_return_url: assignmentsReturn({
+          placement: "course_assignments_menu",
+          context_module_id: 31,
+        }),
+      }),
+      "https://canvas.test",
+    ).moduleId,
+    "31",
+  );
+  // Không có module và không đến từ trang Assignment thì vẫn là mở nhầm chỗ.
+  for (const [label, returnUrl, custom] of [
+    ["placement khác", assignmentsReturn({ placement: "module_index_menu_modal" }), undefined],
+    ["không placement", assignmentsReturn({}), undefined],
+    ["biến chưa mở rộng", "https://canvas.test/courses/3/deep_linking_response", { canvas_assignment_id: "$Canvas.assignment.id" }],
+    ["id không phải số", "https://canvas.test/courses/3/deep_linking_response", { canvas_assignment_id: "0" }],
+  ]) {
+    assert.throws(
+      () =>
+        deepLinkSettings(
+          withCustom(custom, { deep_link_return_url: returnUrl }),
+          "https://canvas.test",
+        ),
+      /module/,
+      label,
+    );
+  }
   const state = {
     ...settings,
     userId: "user",

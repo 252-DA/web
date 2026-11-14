@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:lti": "node scripts/test-lti-deep-link.mjs"
+    "test:lti": "node scripts/test-lti-deep-link.mjs && node scripts/test-lti-roles.mjs"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.14.3",

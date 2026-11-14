@@ -37,7 +37,8 @@ export type SavedQuizSet = {
 };
 
 export type CanvasQuizContext = {
-  module: { id: string; name: string };
+  /** null khi mở từ trang Assignments: bài tập tạo ngoài module nào. */
+  module: { id: string; name: string } | null;
   chapters: ChapterOption[];
   chapter: ChapterOption | null;
   learningOutcomes: LearningOutcomeOption[];
@@ -101,6 +102,25 @@ export type LearnerQuizResults = {
     feedback: string | null;
     explanation: string | null;
   }> | null;
+};
+
+/** Bài làm của một lượt nộp cho SpeedGrader (core-api QuizSetService.submissionDetail). */
+export type QuizSubmissionDetail = {
+  quiz_set_id: string;
+  title: string;
+  mode: "practice" | "exam";
+  submissionId: string;
+  student: { userId: string; name: string };
+  attemptedAt: string;
+  attemptNumber: number;
+  attemptCount: number;
+  /** Phần trăm đúng 0–100. */
+  score: number;
+  /** Điểm tối đa của Assignment trên Canvas và điểm quy theo thang đó. */
+  pointsPossible: number;
+  scoreGiven: number;
+  sync: GradeSync;
+  review: NonNullable<LearnerQuizResults["review"]>;
 };
 
 /** Một lượt làm bài kiểm tra: đề theo thứ tự đã xáo, không kèm đáp án. */
