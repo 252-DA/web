@@ -69,9 +69,12 @@ type CoreMethod =
   | "CreateMicroContentUpload"
   | "ConfirmMicroContentUpload"
   | "GetMicroContentVideoUrl"
+  | "GetMicroContentSubtitles"
+  | "RequestMicroContentOutline"
   | "RequestMicroContentScript"
   | "SaveMicroContentScript"
   | "RequestMicroContentRender"
+  | "RequestMicroContentQuiz"
   | "ReportMicroContentProgress"
   | "SubmitMicroContent"
   | "GetMicroContentResult"
@@ -313,7 +316,11 @@ export const coreApi = {
   createContentGenerationRequest: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
     callCore<TResponse>("CreateContentGenerationRequest", body, claims),
   listContentGenerationRequests: <TResponse = unknown>(
-    body: { courseId: string; limit?: number; type?: "card" | "quiz" | "relations" },
+    body: {
+      courseId: string;
+      limit?: number;
+      type?: "card" | "quiz" | "relations" | "micro_outline" | "video_script" | "micro_quiz";
+    },
     claims: BffClaims,
   ) => callCore<TResponse>("ListContentGenerationRequests", body, claims),
   // Chọn model AI theo task — chỉ admin; core-api kiểm tra quyền và tên profile.
@@ -389,12 +396,30 @@ export const coreApi = {
     callCore<TResponse>("ConfirmMicroContentUpload", { microContentId }, claims),
   getMicroContentVideoUrl: <TResponse = unknown>(microContentId: string, claims: BffClaims) =>
     callCore<TResponse>("GetMicroContentVideoUrl", { microContentId }, claims),
+  getMicroContentSubtitles: <TResponse = unknown>(microContentId: string, claims: BffClaims) =>
+    callCore<TResponse>("GetMicroContentSubtitles", { microContentId }, claims),
+  requestMicroContentOutline: <TResponse = unknown>(
+    body: { courseId: string; documentId: string },
+    claims: BffClaims,
+  ) => callCore<TResponse>("RequestMicroContentOutline", body, claims),
   requestMicroContentScript: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
     callCore<TResponse>("RequestMicroContentScript", body, claims),
   saveMicroContentScript: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
     callCore<TResponse>("SaveMicroContentScript", body, claims),
-  requestMicroContentRender: <TResponse = unknown>(microContentId: string, claims: BffClaims) =>
-    callCore<TResponse>("RequestMicroContentRender", { microContentId }, claims),
+  requestMicroContentRender: <TResponse = unknown>(
+    microContentId: string,
+    claims: BffClaims,
+    allowFlagged?: boolean,
+  ) =>
+    callCore<TResponse>(
+      "RequestMicroContentRender",
+      allowFlagged ? { microContentId, allowFlagged: true } : { microContentId },
+      claims,
+    ),
+  requestMicroContentQuiz: <TResponse = unknown>(
+    body: { microContentId: string; count?: number; questionTypes?: string[] },
+    claims: BffClaims,
+  ) => callCore<TResponse>("RequestMicroContentQuiz", body, claims),
   reportMicroContentProgress: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
     callCore<TResponse>("ReportMicroContentProgress", body, claims),
   submitMicroContent: <TResponse = unknown>(body: unknown, claims: BffClaims) =>

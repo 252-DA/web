@@ -1,27 +1,37 @@
 "use client";
 
 import { useState } from "react";
-import { MicroContentPlayer } from "./player";
-import { MicroContentQuestions } from "./questions";
+import { MicroContentPlayer, type SceneTimelineItem } from "./player";
+import { MicroContentQuestions, type AttemptResult, type LearnQuestion } from "./questions";
+
+export interface LearnMicroContentData {
+  id: string;
+  title: string;
+  description: string | null;
+  videoDurationMs: number | null;
+  requiredWatchPercent: number;
+  passingScore: number;
+  hasSubtitles?: boolean;
+  sceneTimeline?: SceneTimelineItem[];
+  transcriptText?: string | null;
+  loCode?: string | null;
+  sourceDocumentTitle?: string | null;
+  sourcePageFrom?: number | null;
+  sourcePageTo?: number | null;
+  questions: LearnQuestion[];
+}
 
 interface Props {
-  microContent: {
-    id: string;
-    title: string;
-    description: string | null;
-    videoDurationMs: number | null;
-    requiredWatchPercent: number;
-    passingScore: number;
-    questions: any[];
-  };
+  microContent: LearnMicroContentData;
+  initialResult?: AttemptResult | null;
   sid: string;
   isStaff: boolean;
 }
 
-export function LearnMicroContentClient({ microContent, sid, isStaff }: Props) {
+export function LearnMicroContentClient({ microContent, initialResult, sid, isStaff }: Props) {
   const [watchedPercent, setWatchedPercent] = useState<number>(0);
   const [unlocked, setUnlocked] = useState<boolean>(
-    microContent.requiredWatchPercent === 0 || isStaff,
+    microContent.requiredWatchPercent === 0 || isStaff || Boolean(initialResult),
   );
 
   const handleProgressUpdate = (data: { watchedPercent: number; unlocked: boolean }) => {
@@ -39,6 +49,9 @@ export function LearnMicroContentClient({ microContent, sid, isStaff }: Props) {
         sid={sid}
         title={microContent.title}
         durationMs={microContent.videoDurationMs}
+        hasSubtitles={microContent.hasSubtitles}
+        sceneTimeline={microContent.sceneTimeline}
+        transcriptText={microContent.transcriptText}
         onProgressUpdate={handleProgressUpdate}
       />
 
@@ -66,6 +79,7 @@ export function LearnMicroContentClient({ microContent, sid, isStaff }: Props) {
           questions={microContent.questions || []}
           requiredWatchPercent={microContent.requiredWatchPercent}
           passingScore={microContent.passingScore}
+          initialResult={initialResult}
           sid={sid}
           isStaff={isStaff}
           unlocked={unlocked}

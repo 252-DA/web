@@ -1,12 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ComponentProps } from "react";
 import { VideoPanel } from "./video-panel";
-import { QuestionPanel } from "./question-panel";
+import { QuestionPanel, type QuestionDraft } from "./question-panel";
 import { PublishPanel } from "./publish-panel";
 
+export type EditableMicroContent = ComponentProps<typeof VideoPanel>["microContent"] & {
+  title: string;
+  description: string | null;
+  passingScore: number;
+  requiredWatchPercent: number;
+  status: string;
+  questions: QuestionDraft[];
+  loCode?: string | null;
+};
+
 interface Props {
-  microContent: any;
+  microContent: EditableMicroContent;
   sid: string;
   defaultTab?: string;
 }

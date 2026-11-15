@@ -56,6 +56,25 @@ export async function PUT(request: NextRequest, context: Context) {
           body.requiredWatchPercent !== undefined ? Number(body.requiredWatchPercent) : undefined,
         aiPrompt: body.aiPrompt,
         aiOptions: body.aiOptions,
+        ...(body.sourceDocumentId !== undefined
+          ? { sourceDocumentId: body.sourceDocumentId }
+          : {}),
+        ...(body.sourcePageFrom !== undefined
+          ? {
+              sourcePageFrom:
+                body.sourcePageFrom === null ? null : Number(body.sourcePageFrom),
+            }
+          : {}),
+        ...(body.sourcePageTo !== undefined
+          ? {
+              sourcePageTo:
+                body.sourcePageTo === null ? null : Number(body.sourcePageTo),
+            }
+          : {}),
+        ...(body.loId !== undefined ? { loId: body.loId } : {}),
+        ...(body.position !== undefined
+          ? { position: body.position === null ? null : Number(body.position) }
+          : {}),
       },
       claims,
     );

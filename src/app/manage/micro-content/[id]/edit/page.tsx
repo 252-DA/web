@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { readManageSession } from "@/lib/session";
 import { coreApi, claimsFromSession } from "@/lib/core-api";
 import { InstructorNav } from "@/components/instructor-nav";
-import { EditTabsClient } from "./edit-tabs-client";
+import { EditTabsClient, type EditableMicroContent } from "./edit-tabs-client";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -30,10 +30,10 @@ export default async function EditMicroContentPage({ params, searchParams }: Pro
   const { sid, session } = access.active;
   const claims = claimsFromSession(session);
 
-  let microContent: any = null;
+  let microContent: EditableMicroContent | null = null;
   try {
-    microContent = await coreApi.getMicroContent(id, claims);
-  } catch (error) {
+    microContent = await coreApi.getMicroContent<EditableMicroContent>(id, claims);
+  } catch {
     notFound();
   }
 
@@ -54,9 +54,31 @@ export default async function EditMicroContentPage({ params, searchParams }: Pro
                 </a>
               </div>
               <h1 className="mt-1 text-2xl font-semibold">{microContent.title}</h1>
-              <p className="mt-1 text-sm text-slate-600">
-                {session.displayName || session.lmsSub} · {session.courseId}
-              </p>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+                <span>
+                  {session.displayName || session.lmsSub} · {session.courseId}
+                </span>
+                {microContent.loCode && (
+                  <span className="rounded bg-sky-50 border border-sky-200 px-2 py-0.5 text-xs font-semibold text-sky-800">
+                    {microContent.loCode}
+                  </span>
+                )}
+                {microContent.sourceDocumentId && (
+                  <a
+                    href={`${withSid(
+                      `/api/documents/${microContent.sourceDocumentId}/file`,
+                      sid,
+                    )}#page=${microContent.sourcePageFrom || 1}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-sky-700 hover:bg-sky-50"
+                  >
+                    {microContent.sourceDocumentTitle || "Slide nguồn"} · Trang{" "}
+                    {microContent.sourcePageFrom || 1}–{microContent.sourcePageTo || microContent.sourcePageFrom || 1}{" "}
+                    ↗
+                  </a>
+                )}
+              </div>
             </div>
             <div>
               {microContent.status === "PUBLISHED" ? (

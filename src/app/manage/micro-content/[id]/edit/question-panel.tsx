@@ -1,11 +1,24 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   QUESTION_TYPES,
   TRUE_FALSE_OPTIONS,
   type QuestionType,
 } from "@/lib/question-types";
+
+export type ShortAnswerKey = {
+  model_answer?: string;
+  rubric?: string[];
+};
+
+function asShortAnswerKey(value: unknown): ShortAnswerKey {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as ShortAnswerKey;
+  }
+  return {};
+}
 
 export type QuestionDraft = {
   id?: string;
@@ -24,6 +37,7 @@ interface Props {
 }
 
 export function QuestionPanel({ microContentId, initialQuestions, sid }: Props) {
+  const router = useRouter();
   const [questions, setQuestions] = useState<QuestionDraft[]>(() =>
     initialQuestions.map((q, idx) => ({
       ...q,
@@ -33,6 +47,122 @@ export function QuestionPanel({ microContentId, initialQuestions, sid }: Props) 
   );
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
+  const [quizCount, setQuizCount] = useState<number>(3);
+  const [quizTypes, setQuizTypes] = useState<string[]>([
+    "MCQ_SINGLE",
+    "TRUE_FALSE",
+    "SHORT_ANSWER",
+  ]);
+  const [generatingQuiz, setGeneratingQuiz] = useState(false);
+
+  useEffect(() => {
+    if (!generatingQuiz) return;
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const res = await fetch(
+          `/api/micro-content/${microContentId}/ai?type=micro_quiz&sid=${encodeURIComponent(sid)}`,
+          { cache: "no-store" },
+        );
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        const req = data.request as { status?: string; last_error?: string } | null;
+        if (!req) return;
+
+        if (req.status === "SUCCEEDED") {
+          const itemRes = await fetch(
+            `/api/micro-content/${microContentId}?sid=${encodeURIComponent(sid)}`,
+            { cache: "no-store" },
+          );
+          if (itemRes.ok && !cancelled) {
+            const item = await itemRes.json();
+            if (Array.isArray(item.questions)) {
+              setQuestions(
+                item.questions.map((q: QuestionDraft, idx: number) => ({
+                  ...q,
+                  position: idx + 1,
+                  explanation: q.explanation || "",
+                })),
+              );
+            }
+          }
+          if (!cancelled) {
+            setGeneratingQuiz(false);
+            setMessage({
+              text: "AI đã sinh và kiểm chứng xong bộ câu hỏi củng cố!",
+              type: "success",
+            });
+            router.refresh();
+          }
+        } else if (req.status === "FAILED") {
+          if (!cancelled) {
+            setGeneratingQuiz(false);
+            setMessage({
+              text: req.last_error || "Sinh câu hỏi củng cố thất bại.",
+              type: "error",
+            });
+          }
+        }
+      } catch {
+        // Bỏ qua lỗi mạng thoáng qua
+      }
+    };
+
+    const timer = setInterval(poll, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [generatingQuiz, microContentId, sid, router]);
+
+  const toggleQuizType = (value: string) => {
+    setQuizTypes((prev) =>
+      prev.includes(value)
+        ? prev.length > 1
+          ? prev.filter((item) => item !== value)
+          : prev
+        : [...prev, value],
+    );
+  };
+
+  const handleGenerateQuiz = async () => {
+    if (
+      questions.length > 0 &&
+      !window.confirm(
+        `Sinh lại bộ câu hỏi mới sẽ thay thế ${questions.length} câu hỏi hiện có. Tiếp tục?`,
+      )
+    ) {
+      return;
+    }
+
+    setGeneratingQuiz(true);
+    setMessage(null);
+    try {
+      const res = await fetch(
+        `/api/micro-content/${microContentId}/ai?sid=${encodeURIComponent(sid)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "request_quiz",
+            count: quizCount,
+            questionTypes: quizTypes,
+          }),
+        },
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Không thể gửi yêu cầu sinh câu hỏi.");
+      }
+    } catch (err) {
+      setGeneratingQuiz(false);
+      setMessage({
+        text: err instanceof Error ? err.message : "Đã có lỗi khi gửi yêu cầu AI.",
+        type: "error",
+      });
+    }
+  };
 
   const addQuestion = (type: QuestionType) => {
     let initialOptions: unknown = null;
@@ -133,6 +263,63 @@ export function QuestionPanel({ microContentId, initialQuestions, sid }: Props) 
 
   return (
     <div className="space-y-6">
+      {/* Sinh câu hỏi củng cố bằng AI */}
+      <div className="rounded-xl border border-sky-200 bg-white p-5 shadow-sm space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900">Sinh câu hỏi củng cố</h3>
+            <p className="mt-0.5 text-xs text-slate-500">
+              AI tạo câu hỏi bám đúng các trang slide nguồn và kịch bản bài học, kèm giải thích rõ nguồn.
+              {questions.length > 0 && ` Lưu ý: sinh mới sẽ thay thế ${questions.length} câu hiện có.`}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleGenerateQuiz}
+            disabled={generatingQuiz}
+            className="rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white hover:bg-sky-700 disabled:opacity-50"
+          >
+            {generatingQuiz ? "AI đang sinh câu hỏi..." : "Sinh câu hỏi củng cố"}
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-4 pt-1 text-xs text-slate-700">
+          <div className="flex items-center gap-2">
+            <span className="font-medium">Số câu:</span>
+            <select
+              value={quizCount}
+              onChange={(e) => setQuizCount(Number(e.target.value))}
+              disabled={generatingQuiz}
+              className="rounded border border-slate-300 bg-white px-2 py-1 text-xs"
+            >
+              <option value={2}>2 câu</option>
+              <option value={3}>3 câu</option>
+              <option value={4}>4 câu</option>
+            </select>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="font-medium">Dạng câu hỏi:</span>
+            {[
+              { value: "MCQ_SINGLE", label: "Trắc nghiệm 1 đáp án" },
+              { value: "TRUE_FALSE", label: "Đúng / Sai" },
+              { value: "SHORT_ANSWER", label: "Tự luận ngắn" },
+              { value: "FILL_BLANK", label: "Điền khuyết" },
+            ].map((opt) => (
+              <label key={opt.value} className="inline-flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={quizTypes.includes(opt.value)}
+                  onChange={() => toggleQuizType(opt.value)}
+                  disabled={generatingQuiz}
+                  className="rounded border-slate-300 text-sky-600"
+                />
+                <span>{opt.label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      </div>
+
       {message && (
         <div
           className={`rounded-lg p-4 text-sm ${
@@ -361,11 +548,11 @@ export function QuestionPanel({ microContentId, initialQuestions, sid }: Props) 
                     </label>
                     <textarea
                       rows={2}
-                      value={(q.correctAnswer as any)?.model_answer || ""}
+                      value={asShortAnswerKey(q.correctAnswer).model_answer || ""}
                       onChange={(e) => {
-                        const current = (q.correctAnswer as any) || { rubric: [] };
+                        const current = asShortAnswerKey(q.correctAnswer);
                         updateQuestion(index, {
-                          correctAnswer: { ...current, model_answer: e.target.value },
+                          correctAnswer: { rubric: [], ...current, model_answer: e.target.value },
                         });
                       }}
                       placeholder="Bài làm mẫu đạt điểm tối đa..."
@@ -379,8 +566,8 @@ export function QuestionPanel({ microContentId, initialQuestions, sid }: Props) 
                     <textarea
                       rows={3}
                       value={
-                        Array.isArray((q.correctAnswer as any)?.rubric)
-                          ? (q.correctAnswer as any).rubric.join("\n")
+                        Array.isArray(asShortAnswerKey(q.correctAnswer).rubric)
+                          ? asShortAnswerKey(q.correctAnswer).rubric!.join("\n")
                           : ""
                       }
                       onChange={(e) => {
@@ -388,9 +575,9 @@ export function QuestionPanel({ microContentId, initialQuestions, sid }: Props) 
                           .split("\n")
                           .map((l) => l.trim())
                           .filter(Boolean);
-                        const current = (q.correctAnswer as any) || { model_answer: "" };
+                        const current = asShortAnswerKey(q.correctAnswer);
                         updateQuestion(index, {
-                          correctAnswer: { ...current, rubric: lines },
+                          correctAnswer: { model_answer: "", ...current, rubric: lines },
                         });
                       }}
                       placeholder="Ý 1: Nêu đúng định nghĩa (ngang điểm)&#10;Ý 2: Nêu được ví dụ minh họa"

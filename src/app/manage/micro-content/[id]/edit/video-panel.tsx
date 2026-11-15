@@ -60,11 +60,21 @@ export const AVAILABLE_VOICES: VoiceOption[] = [
   },
 ];
 
+interface SceneCheck {
+  status?: "VERIFIED" | "FLAGGED" | "INCONCLUSIVE" | "UNVERIFIED";
+  reason?: string | null;
+  notes?: string | null;
+  regeneration_attempts?: number;
+}
+
 interface Scene {
   title: string;
   bullets: string[];
   narration: string;
   voice?: string;
+  slide_page?: number;
+  source_pages?: number[];
+  check?: SceneCheck;
 }
 
 interface Script {
@@ -85,6 +95,16 @@ interface Props {
     videoError: string | null;
     aiPrompt?: string | null;
     aiScript?: Script | null;
+    sourceDocumentId?: string | null;
+    sourceDocumentTitle?: string | null;
+    sourceDocumentTotalPages?: number | null;
+    sourcePageFrom?: number | null;
+    sourcePageTo?: number | null;
+    loCode?: string | null;
+    scriptStatus?: string;
+    scriptError?: string | null;
+    hasSubtitles?: boolean;
+    sceneTimeline?: Array<{ scene_index: number; title: string; start_ms: number; end_ms: number }>;
   };
   sid: string;
 }
@@ -105,18 +125,31 @@ export function VideoPanel({ microContent, sid }: Props) {
   const audioPreviewRef = useRef<HTMLAudioElement | null>(null);
 
   const [source, setSource] = useState<"UPLOAD" | "AI" | "LIBRARY">(
-    microContent.videoAssetId ? "LIBRARY" : (microContent.videoSource as "UPLOAD" | "AI") || "UPLOAD",
+    microContent.videoSource === "AI"
+      ? "AI"
+      : microContent.videoAssetId
+      ? "LIBRARY"
+      : (microContent.videoSource as "UPLOAD" | "AI") || "UPLOAD",
   );
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   // AI Script states
-  const [aiMode, setAiMode] = useState<"PDF" | "PROMPT">("PDF");
+  const [aiMode, setAiMode] = useState<"SLIDE" | "PDF" | "PROMPT">(
+    microContent.sourceDocumentId ? "SLIDE" : "PDF",
+  );
   const [prompt, setPrompt] = useState(microContent.aiPrompt || "");
   const [script, setScript] = useState<Script | null>(
     microContent.aiScript || null,
   );
+  const [scriptStatus, setScriptStatus] = useState<string>(
+    microContent.scriptStatus || (microContent.aiScript ? "READY" : "NONE"),
+  );
+  const [scriptError, setScriptError] = useState<string | null>(
+    microContent.scriptError || null,
+  );
+  const [confirmFlagged, setConfirmFlagged] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState<string>(
     microContent.aiScript?.voice || "vi-VN-HoaiMyNeural",
   );
@@ -124,7 +157,9 @@ export function VideoPanel({ microContent, sid }: Props) {
   const [previewLoading, setPreviewLoading] = useState<string | null>(null);
   const [currentAudioSrc, setCurrentAudioSrc] = useState<string | null>(null);
 
-  const [generatingScript, setGeneratingScript] = useState(false);
+  const [generatingScript, setGeneratingScript] = useState(
+    microContent.scriptStatus === "GENERATING",
+  );
   const [savingScript, setSavingScript] = useState(false);
   const [renderingVideo, setRenderingVideo] = useState(false);
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
@@ -135,6 +170,46 @@ export function VideoPanel({ microContent, sid }: Props) {
   const [endPage, setEndPage] = useState<number>(20);
   const [targetScenes, setTargetScenes] = useState<number>(5);
   const [extractingPdf, setExtractingPdf] = useState(false);
+
+  // Polling script generation when GENERATING
+  useEffect(() => {
+    if (scriptStatus !== "GENERATING") return;
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const res = await fetch(
+          `/api/micro-content/${microContent.id}?sid=${encodeURIComponent(sid)}`,
+          { cache: "no-store" },
+        );
+        if (!res.ok || cancelled) return;
+        const fresh = await res.json();
+        if (fresh.scriptStatus && fresh.scriptStatus !== "GENERATING") {
+          setScriptStatus(fresh.scriptStatus);
+          setGeneratingScript(false);
+          if (fresh.aiScript) {
+            setScript(fresh.aiScript);
+            setConfirmFlagged(false);
+          }
+          setScriptError(fresh.scriptError || null);
+          if (fresh.scriptStatus === "READY") {
+            setSaveSuccessMessage("Đã sinh và kiểm chứng xong kịch bản từ slide nguồn!");
+          } else if (fresh.scriptStatus === "FAILED") {
+            setError(fresh.scriptError || "Sinh kịch bản từ slide thất bại.");
+          }
+          router.refresh();
+        }
+      } catch {
+        // Bỏ qua lỗi mạng thoáng qua
+      }
+    };
+
+    const timer = setInterval(poll, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [scriptStatus, microContent.id, sid, router]);
 
   // Polling when processing video
   useEffect(() => {
@@ -302,11 +377,15 @@ export function VideoPanel({ microContent, sid }: Props) {
   };
 
   const handleGenerateScript = async () => {
-    if (!prompt.trim()) {
-      setError("Vui lòng nhập chủ đề / nội dung giảng giải.");
+    if (!microContent.sourceDocumentId) {
+      setError(
+        "Bài học chưa gắn bộ slide nguồn. Hãy quay lại danh sách Micro Content để tạo từ bộ slide hoặc dùng tab Tải PDF.",
+      );
       return;
     }
     setGeneratingScript(true);
+    setScriptStatus("GENERATING");
+    setScriptError(null);
     setError(null);
     setSaveSuccessMessage(null);
 
@@ -318,7 +397,7 @@ export function VideoPanel({ microContent, sid }: Props) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             action: "request_script",
-            prompt: prompt.trim(),
+            prompt: prompt.trim() || undefined,
             options: { voice: selectedVoice },
           }),
         },
@@ -329,18 +408,12 @@ export function VideoPanel({ microContent, sid }: Props) {
         throw new Error(data.error || "Sinh kịch bản thất bại.");
       }
 
-      if (data.script) {
-        const scriptWithVoice = {
-          ...data.script,
-          voice: selectedVoice,
-        };
-        setScript(scriptWithVoice);
-      }
+      setSaveSuccessMessage("Đã gửi yêu cầu sinh kịch bản từ slide nguồn...");
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Đã có lỗi khi sinh kịch bản.");
-    } finally {
       setGeneratingScript(false);
+      setScriptStatus("FAILED");
+      setError(err instanceof Error ? err.message : "Đã có lỗi khi sinh kịch bản.");
     }
   };
 
@@ -479,6 +552,7 @@ export function VideoPanel({ microContent, sid }: Props) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             action: "request_render",
+            allowFlagged: confirmFlagged,
           }),
         },
       );
@@ -522,6 +596,9 @@ export function VideoPanel({ microContent, sid }: Props) {
     setScript({ ...script, scenes: newScenes });
   };
 
+  const flaggedCount =
+    script?.scenes?.filter((s) => s.check?.status === "FLAGGED").length ?? 0;
+
   return (
     <div className="space-y-6">
       {/* Video Preview nếu đã sẵn sàng */}
@@ -534,11 +611,23 @@ export function VideoPanel({ microContent, sid }: Props) {
               className="w-full h-full"
               src={`/api/micro-content/${microContent.id}/video?sid=${encodeURIComponent(sid)}`}
             >
+              {microContent.hasSubtitles && (
+                <track
+                  kind="subtitles"
+                  src={`/api/micro-content/${microContent.id}/subtitles?sid=${encodeURIComponent(sid)}`}
+                  srcLang="vi"
+                  label="Tiếng Việt"
+                  default
+                />
+              )}
               Trình duyệt của bạn không hỗ trợ thẻ video.
             </video>
           </div>
           <p className="mt-2 text-xs text-slate-500">
-            Thời lượng: {formatDuration(microContent.videoDurationMs)} · Tua video hoạt động mượt mà qua HTTP Range Stream.
+            Thời lượng: {formatDuration(microContent.videoDurationMs)} · Tua video hoạt động mượt mà qua HTTP Range Stream
+            {microContent.hasSubtitles
+              ? ` · Phụ đề WebVTT (${microContent.sceneTimeline?.length ?? 0} cảnh).`
+              : "."}
           </p>
         </div>
       )}
@@ -795,11 +884,24 @@ export function VideoPanel({ microContent, sid }: Props) {
 
             {/* Giai đoạn 1: Lựa chọn cách tạo kịch bản */}
             <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-5 space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">
                 <span className="text-xs font-bold uppercase tracking-wide text-slate-800">
                   Giai đoạn 1: Nạp nội dung kịch bản
                 </span>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
+                  {microContent.sourceDocumentId && (
+                    <button
+                      type="button"
+                      onClick={() => setAiMode("SLIDE")}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                        aiMode === "SLIDE"
+                          ? "bg-sky-600 text-white shadow-sm"
+                          : "bg-white text-slate-600 border border-slate-300 hover:bg-slate-100"
+                      }`}
+                    >
+                      📚 Slide nguồn của bài
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setAiMode("PDF")}
@@ -809,7 +911,7 @@ export function VideoPanel({ microContent, sid }: Props) {
                         : "bg-white text-slate-600 border border-slate-300 hover:bg-slate-100"
                     }`}
                   >
-                    📄 Tải file PDF bài giảng / Slide
+                    📄 Tải file PDF khác
                   </button>
                   <button
                     type="button"
@@ -820,12 +922,67 @@ export function VideoPanel({ microContent, sid }: Props) {
                         : "bg-white text-slate-600 border border-slate-300 hover:bg-slate-100"
                     }`}
                   >
-                    💡 Soạn theo chủ đề (Prompt)
+                    💡 Yêu cầu bổ sung
                   </button>
                 </div>
               </div>
 
-              {aiMode === "PDF" ? (
+              {aiMode === "SLIDE" && microContent.sourceDocumentId ? (
+                <div className="space-y-3 pt-1">
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-200 bg-white p-4">
+                    <div className="space-y-1 text-xs">
+                      <p className="font-semibold text-slate-900">
+                        {microContent.sourceDocumentTitle || "Bộ slide bài giảng"}
+                      </p>
+                      <p className="text-slate-600">
+                        Dải trang nguồn:{" "}
+                        <strong>
+                          Trang {microContent.sourcePageFrom || 1}–{microContent.sourcePageTo || microContent.sourcePageFrom || 1}
+                        </strong>
+                        {microContent.sourceDocumentTotalPages
+                          ? ` / ${microContent.sourceDocumentTotalPages} trang`
+                          : ""}
+                        {microContent.loCode ? ` · LO chính: ${microContent.loCode}` : ""}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <a
+                        href={`/api/documents/${microContent.sourceDocumentId}/file?sid=${encodeURIComponent(
+                          sid,
+                        )}#page=${microContent.sourcePageFrom || 1}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-50"
+                      >
+                        Mở trang slide ↗
+                      </a>
+                      <button
+                        type="button"
+                        onClick={handleGenerateScript}
+                        disabled={generatingScript || scriptStatus === "GENERATING"}
+                        className="rounded-lg bg-sky-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-sky-700 disabled:opacity-50"
+                      >
+                        {generatingScript || scriptStatus === "GENERATING"
+                          ? "Đang sinh kịch bản..."
+                          : script
+                          ? "Sinh lại kịch bản"
+                          : "Sinh kịch bản"}
+                      </button>
+                    </div>
+                  </div>
+                  {scriptStatus === "GENERATING" && (
+                    <div className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+                      <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-amber-600 border-r-transparent" />
+                      AI đang phân tích đúng dải trang slide nguồn, viết lời giảng và kiểm chứng độ bám nguồn...
+                    </div>
+                  )}
+                  {scriptStatus === "FAILED" && scriptError && (
+                    <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-800">
+                      Sinh kịch bản gặp lỗi: {scriptError}
+                    </div>
+                  )}
+                </div>
+              ) : aiMode === "PDF" ? (
                 <div className="space-y-4 pt-1">
                   <div className="rounded-lg border-2 border-dashed border-sky-300 bg-sky-50/40 p-6 text-center hover:bg-sky-50/70 transition">
                     <input
@@ -937,11 +1094,18 @@ export function VideoPanel({ microContent, sid }: Props) {
                   <button
                     type="button"
                     onClick={handleGenerateScript}
-                    disabled={generatingScript}
+                    disabled={generatingScript || scriptStatus === "GENERATING" || !microContent.sourceDocumentId}
                     className="rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white hover:bg-sky-700 disabled:opacity-50"
                   >
-                    {generatingScript ? "Đang tạo kịch bản..." : "Tạo / Đặt lại kịch bản"}
+                    {generatingScript || scriptStatus === "GENERATING"
+                      ? "Đang sinh kịch bản..."
+                      : "Sinh kịch bản"}
                   </button>
+                  {!microContent.sourceDocumentId && (
+                    <p className="text-[11px] text-amber-700">
+                      Bài học này chưa gắn bộ slide nguồn nên không thể sinh kịch bản AI bám slide; hãy dùng tab &ldquo;Tải file PDF khác&rdquo; hoặc tạo từ bộ slide ở trang danh sách.
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -977,7 +1141,11 @@ export function VideoPanel({ microContent, sid }: Props) {
                     <button
                       type="button"
                       onClick={handleRequestRender}
-                      disabled={renderingVideo || microContent.videoStatus === "PROCESSING"}
+                      disabled={
+                        renderingVideo ||
+                        microContent.videoStatus === "PROCESSING" ||
+                        (flaggedCount > 0 && !confirmFlagged)
+                      }
                       className="rounded-lg bg-emerald-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 shadow-sm"
                     >
                       {microContent.videoStatus === "PROCESSING"
@@ -988,17 +1156,83 @@ export function VideoPanel({ microContent, sid }: Props) {
                 )}
               </div>
 
+              {flaggedCount > 0 && (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-950 space-y-2">
+                  <p className="font-semibold">
+                    ⚠ Kịch bản có {flaggedCount} cảnh chưa kiểm chứng được hoàn toàn trên slide nguồn.
+                  </p>
+                  <p>
+                    Vui lòng đối chiếu các cảnh được đánh dấu bên dưới với slide gốc và chỉnh sửa nếu cần trước khi dựng video.
+                  </p>
+                  <label className="inline-flex items-center gap-2 font-medium cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={confirmFlagged}
+                      onChange={(e) => setConfirmFlagged(e.target.checked)}
+                      className="rounded border-amber-400 text-amber-600"
+                    />
+                    <span>Tôi đã kiểm tra và vẫn xác nhận dựng video AI</span>
+                  </label>
+                </div>
+              )}
+
               {script && script.scenes && script.scenes.length > 0 ? (
                 <div className="space-y-4">
-                  {script.scenes.map((scene, idx) => (
+                  {script.scenes.map((scene, idx) => {
+                    const isFlagged = scene.check?.status === "FLAGGED";
+                    const isVerified = scene.check?.status === "VERIFIED";
+                    return (
                     <div
                       key={idx}
-                      className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm space-y-3"
+                      className={`rounded-xl border bg-white p-5 shadow-sm space-y-3 ${
+                        isFlagged
+                          ? "border-amber-300 ring-1 ring-amber-200"
+                          : "border-slate-200"
+                      }`}
                     >
-                      <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                        <span className="text-xs font-bold text-sky-600 uppercase">
-                          Cảnh {idx + 1}
-                        </span>
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-xs font-bold text-sky-600 uppercase">
+                            Cảnh {idx + 1}
+                          </span>
+                          {isVerified && (
+                            <span className="rounded bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                              ✓ Bám nguồn
+                            </span>
+                          )}
+                          {isFlagged && (
+                            <span className="rounded bg-amber-100 border border-amber-300 px-2 py-0.5 text-[11px] font-semibold text-amber-900">
+                              ⚠ Cần kiểm tra nguồn
+                            </span>
+                          )}
+                          {(Array.isArray(scene.source_pages) && scene.source_pages.length > 0
+                            ? scene.source_pages
+                            : typeof scene.slide_page === "number"
+                            ? [scene.slide_page]
+                            : []
+                          ).map((pageNo) =>
+                            microContent.sourceDocumentId ? (
+                                <a
+                                  key={pageNo}
+                                  href={`/api/documents/${microContent.sourceDocumentId}/file?sid=${encodeURIComponent(
+                                    sid,
+                                  )}#page=${pageNo}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-sky-700 hover:bg-sky-50"
+                                >
+                                  Trang {pageNo} ↗
+                                </a>
+                              ) : (
+                                <span
+                                  key={pageNo}
+                                  className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600"
+                                >
+                                  Trang {pageNo}
+                                </span>
+                              ),
+                            )}
+                        </div>
                         <div className="flex items-center gap-3">
                           {/* Cho phép chọn giọng riêng cho cảnh này nếu muốn */}
                           <div className="flex items-center gap-1.5 text-xs text-slate-600">
@@ -1027,6 +1261,12 @@ export function VideoPanel({ microContent, sid }: Props) {
                           )}
                         </div>
                       </div>
+
+                      {isFlagged && (scene.check?.reason || scene.check?.notes) && (
+                        <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-900">
+                          Lý do gắn cờ: {scene.check.reason || scene.check.notes}
+                        </div>
+                      )}
 
                       <div>
                         <label className="block text-xs font-medium text-slate-600 mb-1">
@@ -1077,7 +1317,8 @@ export function VideoPanel({ microContent, sid }: Props) {
                         />
                       </div>
                     </div>
-                  ))}
+                  );
+                  })}
                 </div>
               ) : (
                 <div className="rounded-lg border border-dashed border-slate-200 bg-white p-8 text-center text-xs text-slate-400">
