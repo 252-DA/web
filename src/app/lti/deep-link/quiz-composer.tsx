@@ -427,20 +427,34 @@ export function QuizComposer({
           <section className="rounded-xl border border-slate-200 bg-white p-4">
             <h2 className="text-sm font-semibold">Micro Content của khóa học</h2>
             <div className="mt-2 divide-y divide-slate-200">
-              {data.microContents.map((mc) => (
-                <form key={mc.id} action={returnUrl} method="post" className="flex items-center justify-between gap-3 py-2">
-                  <input type="hidden" name="microContentId" value={mc.id} />
-                  <div>
-                    <span className="text-sm font-medium text-slate-900">{mc.title}</span>
-                    <span className="ml-2 text-xs text-slate-500">
-                      · {mc.questionCount} câu hỏi · {mc.videoStatus === "READY" ? "Video sẵn sàng" : "Chưa có video"}
-                    </span>
-                  </div>
-                  <button type="submit" className={ghostButton}>
-                    Thêm vào {target}
-                  </button>
-                </form>
-              ))}
+              {data.microContents.map((mc) => {
+                const isPublished = mc.status === "PUBLISHED";
+                return (
+                  <form key={mc.id} action={returnUrl} method="post" className="flex items-center justify-between gap-3 py-2.5">
+                    <input type="hidden" name="microContentId" value={mc.id} />
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-medium text-slate-900">{mc.title}</span>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                            isPublished
+                              ? "bg-emerald-50 text-emerald-700"
+                              : "bg-amber-50 text-amber-800"
+                          }`}
+                        >
+                          {isPublished ? "Đã xuất bản" : "Bản nháp (học viên chưa xem được)"}
+                        </span>
+                      </div>
+                      <span className="mt-0.5 block text-xs text-slate-500">
+                        {mc.questionCount} câu hỏi · {mc.videoStatus === "READY" ? "Video sẵn sàng" : "Chưa có video"}
+                      </span>
+                    </div>
+                    <button type="submit" className={ghostButton}>
+                      Thêm vào {target}
+                    </button>
+                  </form>
+                );
+              })}
             </div>
           </section>
         )}

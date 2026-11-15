@@ -30,7 +30,11 @@ export async function POST(request: NextRequest) {
 
     const microContentId = String(form.get("microContentId") || "");
     if (microContentId && form.get("cancel") !== "true") {
-      const item: any = await coreApi.getMicroContent(microContentId, active.claims);
+      const item = await coreApi.getMicroContent<{
+        id: string;
+        title: string;
+        questions?: unknown[];
+      }>(microContentId, active.claims);
       if (!item) throw new DeepLinkError("Micro Content không tồn tại hoặc không thuộc khóa học.");
       const jwt = await signDeepLinkMicroContentResponse(active.flow, {
         micro_content_id: item.id,

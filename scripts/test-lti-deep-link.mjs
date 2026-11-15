@@ -36,6 +36,7 @@ try {
   const {
     deepLinkSettings,
     signDeepLinkResponse,
+    signDeepLinkMicroContentResponse,
     deepLinkForm,
     LTI_CLAIM,
     DL_CLAIM,
@@ -314,8 +315,28 @@ try {
   assert.match(processorItem.text, /3 tiêu chí, tối đa 10 điểm/);
   assert.ok(processorItem.text.length <= 255);
 
+  const { payload: microResponse } = await jwtVerify(
+    await signDeepLinkMicroContentResponse(state, {
+      micro_content_id: "mc-1",
+      title: "Spark RDD cơ bản",
+      questionCount: 3,
+    }),
+    publicKey,
+    { issuer: "client-123", audience: "https://canvas.instructure.com" },
+  );
+  const microItem = microResponse[`${DL_CLAIM}content_items`][0];
+  assert.equal(microItem.type, "ltiResourceLink");
+  assert.equal(microItem.url, "https://tool.test/learn/micro-content/mc-1");
+  assert.equal(microItem.title, "Spark RDD cơ bản");
+  assert.equal(microItem.lineItem, undefined);
+  assert.deepEqual(microItem.custom, {
+    target_kind: "micro_content",
+    target_id: "mc-1",
+  });
+  assert.match(microItem.text, /Micro Content: Video bài giảng & câu hỏi củng cố \(3 câu\)/);
+
   console.log(
-    "PASS: module context, return-origin validation, signed response, grade item, exam dates/points, cancellation, safe form, asset processor settings/PNS/content item",
+    "PASS: module context, return-origin validation, signed response, grade item, exam dates/points, cancellation, safe form, micro-content link, asset processor settings/PNS/content item",
   );
 } finally {
   await rm(dir, { recursive: true, force: true });

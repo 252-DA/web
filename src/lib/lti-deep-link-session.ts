@@ -73,16 +73,34 @@ export async function loadQuizContext(
       access.claims,
     ),
     coreApi
-      .listMicroContents<{ items: any[] }>(access.flow.courseId, access.claims)
-      .catch(() => ({ items: [] })),
+      .listMicroContents<unknown>(access.flow.courseId, access.claims)
+      .catch(() => []),
   ]);
-  const microContents = (microContentsRes.items || []).map((m: any) => ({
-    id: m.id,
-    title: m.title,
-    status: m.status,
-    videoStatus: m.videoStatus,
-    questionCount: m.questionCount ?? (m.questions?.length || 0),
-  }));
+  type RawMicroContent = {
+    id: string;
+    title: string;
+    status: string;
+    videoStatus: string;
+    questionCount?: number;
+    questions?: unknown[];
+  };
+  const rawMicroContents: RawMicroContent[] = Array.isArray(microContentsRes)
+    ? (microContentsRes as RawMicroContent[])
+    : microContentsRes &&
+        typeof microContentsRes === "object" &&
+        "items" in microContentsRes &&
+        Array.isArray((microContentsRes as { items?: unknown }).items)
+      ? (microContentsRes as { items: RawMicroContent[] }).items
+      : [];
+  const microContents = rawMicroContents
+    .map((m) => ({
+      id: m.id,
+      title: m.title,
+      status: m.status,
+      videoStatus: m.videoStatus,
+      questionCount: m.questionCount ?? (m.questions?.length || 0),
+    }))
+    .sort((a, b) => Number(b.status === "PUBLISHED") - Number(a.status === "PUBLISHED"));
   return { ...context, requests, microContents };
 }
 

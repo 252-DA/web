@@ -57,6 +57,12 @@ export default async function CoursePage({ params, searchParams }: Props) {
             Trợ giảng AI: hỏi về tài liệu khóa học →
           </a>
         )}
+        <a
+          href={withSid(`/learn/courses/${id}/mastery`, sid)}
+          className="mb-4 block rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-900 hover:border-emerald-400"
+        >
+          Mức nắm của tôi: xem tiến độ theo từng chuẩn đầu ra →
+        </a>
         <div className="overflow-hidden rounded border border-slate-200 bg-white">
           <div className="border-b border-slate-200 p-4">
             <h2 className="font-semibold">Lessons đã publish</h2>
