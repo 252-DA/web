@@ -25,6 +25,7 @@ export type ManageMicroContentItem = {
   position: number | null;
   scriptStatus: string;
   hasScript: boolean;
+  lowText?: boolean;
   flaggedSceneCount: number;
   questionCount: number;
   attemptCount: number;
@@ -740,6 +741,14 @@ export function ManageMicroContentClient({
                               <span className="rounded bg-slate-100 px-2 py-0.5 text-slate-600">
                                 {item.questionCount} câu hỏi
                               </span>
+                              {item.lowText && (
+                                <span
+                                  className="rounded bg-amber-50 border border-amber-200 px-2 py-0.5 text-amber-800"
+                                  title="Dải trang nguồn có ít chữ (nhiều hình/biểu đồ)"
+                                >
+                                  Ít chữ
+                                </span>
+                              )}
                               {item.status === "PUBLISHED" && (
                                 <span className="rounded bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-emerald-700">
                                   Đã xuất bản

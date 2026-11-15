@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type MouseEvent, useCallback, useEffect, useRef, useState } from "react";
 
 export interface SceneTimelineItem {
   scene_index: number;
@@ -38,6 +38,9 @@ export function MicroContentPlayer({
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastHeartbeatRef = useRef<number>(0);
+  const lastFramePosMsRef = useRef<number | null>(null);
+  const playedAccMsRef = useRef<number>(0);
+  const isSeekingRef = useRef<boolean>(false);
   const onProgressUpdateRef = useRef(onProgressUpdate);
   const [currentMs, setCurrentMs] = useState(0);
   const [showTranscript, setShowTranscript] = useState(false);
@@ -47,14 +50,14 @@ export function MicroContentPlayer({
   }, [onProgressUpdate]);
 
   const sendProgress = useCallback(
-    async (positionMs: number) => {
+    async (positionMs: number, playedMs = 0) => {
       try {
         const res = await fetch(
           `/api/micro-content/${microContentId}/progress?sid=${encodeURIComponent(sid)}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ positionMs }),
+            body: JSON.stringify({ positionMs, playedMs }),
           },
         );
         if (res.ok) {
@@ -65,13 +68,49 @@ export function MicroContentPlayer({
               unlocked: data.unlocked,
             });
           }
+          return;
         }
       } catch {
         // Bỏ qua lỗi heartbeat để không làm gián đoạn việc xem
       }
+      if (playedMs > 0) {
+        playedAccMsRef.current += playedMs;
+      }
     },
     [microContentId, sid],
   );
+
+  const accumulateFrameDelta = (positionMs: number) => {
+    if (!isSeekingRef.current && lastFramePosMsRef.current !== null) {
+      const delta = positionMs - lastFramePosMsRef.current;
+      // Một nhịp timeupdate bình thường ~250ms (tối đa ~500ms ở tốc độ 2x);
+      // loại bỏ bước nhảy lớn do kéo thanh tua.
+      if (delta > 0 && delta <= 2500) {
+        playedAccMsRef.current += delta;
+      }
+    }
+    lastFramePosMsRef.current = positionMs;
+  };
+
+  const handleSeeking = () => {
+    isSeekingRef.current = true;
+    lastFramePosMsRef.current = null;
+  };
+
+  const handleSeeked = () => {
+    isSeekingRef.current = false;
+    const video = videoRef.current;
+    if (video) {
+      lastFramePosMsRef.current = Math.round(video.currentTime * 1000);
+    }
+  };
+
+  const flushPlayedProgress = (positionMs: number, now: number) => {
+    const playedMs = playedAccMsRef.current;
+    playedAccMsRef.current = 0;
+    lastHeartbeatRef.current = now;
+    void sendProgress(positionMs, playedMs);
+  };
 
   const handleTimeUpdate = () => {
     const video = videoRef.current;
@@ -79,12 +118,12 @@ export function MicroContentPlayer({
 
     const positionMs = Math.round(video.currentTime * 1000);
     setCurrentMs(positionMs);
+    accumulateFrameDelta(positionMs);
 
     const now = Date.now();
     // Gửi heartbeat mỗi ~10 giây chỉ khi video thực sự đang phát
     if (now - lastHeartbeatRef.current >= 10000) {
-      lastHeartbeatRef.current = now;
-      sendProgress(positionMs);
+      flushPlayedProgress(positionMs, now);
     }
   };
 
@@ -93,12 +132,20 @@ export function MicroContentPlayer({
     if (!video) return;
     const positionMs = Math.round(video.currentTime * 1000);
     setCurrentMs(positionMs);
-    sendProgress(positionMs);
+    accumulateFrameDelta(positionMs);
+    flushPlayedProgress(positionMs, Date.now());
   };
 
-  const handleSeekTo = (startMs: number) => {
+  const handleSeekButtonClick = (e: MouseEvent<HTMLButtonElement>) => {
     const video = videoRef.current;
     if (!video) return;
+    const startMs = Number(e.currentTarget.dataset.startMs ?? 0);
+    const prevPosMs = Math.round(video.currentTime * 1000);
+    if (playedAccMsRef.current > 0) {
+      flushPlayedProgress(prevPosMs, Date.now());
+    }
+    isSeekingRef.current = true;
+    lastFramePosMsRef.current = null;
     video.currentTime = Math.max(0, startMs / 1000);
     setCurrentMs(startMs);
     void video.play().catch(() => undefined);
@@ -106,7 +153,7 @@ export function MicroContentPlayer({
 
   // Khởi tạo heartbeat ban đầu để lấy trạng thái tiến độ hiện tại
   useEffect(() => {
-    void sendProgress(0);
+    void sendProgress(0, 0);
   }, [sendProgress]);
 
   const sortedTimeline = [...sceneTimeline].sort((a, b) => a.start_ms - b.start_ms);
@@ -119,6 +166,8 @@ export function MicroContentPlayer({
           controls
           controlsList="nodownload"
           playsInline
+          onSeeking={handleSeeking}
+          onSeeked={handleSeeked}
           onTimeUpdate={handleTimeUpdate}
           onPause={handlePauseOrEnd}
           onEnded={handlePauseOrEnd}
@@ -167,7 +216,8 @@ export function MicroContentPlayer({
                   <button
                     key={`${scene.scene_index}-${scene.start_ms}`}
                     type="button"
-                    onClick={() => handleSeekTo(scene.start_ms)}
+                    data-start-ms={scene.start_ms}
+                    onClick={handleSeekButtonClick}
                     className={`rounded-lg border px-2.5 py-1.5 text-left text-xs transition ${
                       isActive
                         ? "border-sky-500 bg-sky-50 text-sky-900 font-semibold"

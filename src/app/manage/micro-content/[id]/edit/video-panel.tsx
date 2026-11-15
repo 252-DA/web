@@ -94,6 +94,7 @@ interface Props {
     videoDurationMs: number | null;
     videoError: string | null;
     aiPrompt?: string | null;
+    lowText?: boolean;
     aiScript?: Script | null;
     sourceDocumentId?: string | null;
     sourceDocumentTitle?: string | null;
@@ -943,7 +944,21 @@ export function VideoPanel({ microContent, sid }: Props) {
                           ? ` / ${microContent.sourceDocumentTotalPages} trang`
                           : ""}
                         {microContent.loCode ? ` · LO chính: ${microContent.loCode}` : ""}
+                        {microContent.lowText && (
+                          <span className="ml-2 inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
+                            Ít chữ
+                          </span>
+                        )}
                       </p>
+                      <div className="pt-1">
+                        <input
+                          type="text"
+                          value={prompt}
+                          onChange={(e) => setPrompt(e.target.value)}
+                          placeholder="Yêu cầu bổ sung cho AI (không bắt buộc), ví dụ: Nhấn mạnh ví dụ thực tế..."
+                          className="w-full min-w-[260px] rounded border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-800 focus:border-sky-500 focus:bg-white focus:outline-none"
+                        />
+                      </div>
                     </div>
                     <div className="flex items-center gap-2">
                       <a

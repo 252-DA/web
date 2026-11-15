@@ -22,10 +22,16 @@ export async function POST(request: NextRequest, context: Context) {
     const claims = claimsFromSession(session);
     const body = await request.json();
 
+    const playedMs =
+      typeof body.playedMs === "number" && Number.isFinite(body.playedMs)
+        ? Math.max(0, Math.round(body.playedMs))
+        : undefined;
+
     const result = await coreApi.reportMicroContentProgress(
       {
         microContentId: id,
         positionMs: Math.round(Number(body.positionMs) || 0),
+        ...(playedMs !== undefined ? { playedMs } : {}),
       },
       claims,
     );
