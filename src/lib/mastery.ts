@@ -26,6 +26,54 @@ export type LoMasteryState = {
   repeats: number;
 };
 
+export type ReviewInfo = {
+  loId: string;
+  box: number;
+  dueAt: string;
+  lastReviewedAt: string | null;
+  needsRecheck: boolean;
+  due: boolean;
+};
+
+export type PlanAction = "A0" | "A1" | "A3" | "A4" | "A5" | "A6" | "WAIT";
+
+export type PlanDecision = {
+  action: PlanAction;
+  loId: string | null;
+  rule: string;
+  reason: string;
+  evidence: Record<string, number>;
+  alternatives: { action: PlanAction; loId: string }[];
+  issues: { loId: string; issue: string }[];
+  policyVersion: string;
+};
+
+export const PLAN_ACTION_LABEL: Record<PlanAction, string> = {
+  A0: "Nghỉ",
+  A1: "Làm câu luyện",
+  A3: "Xem lại tài liệu nguồn",
+  A4: "Ôn lại",
+  A5: "Chuyển LO tiếp theo",
+  A6: "Cần giảng viên hỗ trợ",
+  WAIT: "Chờ chấm bài",
+};
+
+const PLAN_REASON_TEXT: Record<string, string> = {
+  daily_limit: "Bạn đã đạt giới hạn số câu trong ngày — nghỉ và quay lại sau.",
+  review_due: "Có chuẩn đầu ra đến hạn ôn tập.",
+  stuck: "Bạn đang bị kẹt ở LO này — hệ thống đã ghi nhận để báo giảng viên hỗ trợ.",
+  wrong_streak: "Bạn trả lời chưa đạt liên tiếp — xem lại tài liệu nguồn rồi làm tiếp.",
+  need_evidence: "Làm thêm câu luyện để hệ thống đánh giá mức nắm chắc hơn.",
+  missing_items: "LO này đang thiếu câu luyện — đã báo giảng viên bổ sung.",
+  awaiting_grade: "Có câu tự luận đang chờ chấm — quay lại sau.",
+  lo_mastered_next: "LO vừa đạt — chuyển sang LO tiếp theo trong phạm vi được mở.",
+  all_mastered: "Bạn đã đạt tất cả chuẩn đầu ra của khóa học.",
+};
+
+export function planReasonText(reason: string): string {
+  return PLAN_REASON_TEXT[reason] ?? reason;
+}
+
 export type LoInfo = {
   loId: string;
   code: string;
@@ -34,12 +82,13 @@ export type LoInfo = {
   bloomLevel: number | null;
 };
 
-export type LearnerSummaryLo = LoInfo & LoMasteryState;
+export type LearnerSummaryLo = LoInfo & LoMasteryState & { review: ReviewInfo | null };
 
 export type LearnerSummary = {
   courseId: string;
   userId: string;
   model: ModelInfo;
+  plan: PlanDecision;
   los: LearnerSummaryLo[];
 };
 

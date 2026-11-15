@@ -2,13 +2,16 @@ import { readLtiSession } from "@/lib/session";
 import { coreApi, claimsFromSession } from "@/lib/core-api";
 import { InstructorNav } from "@/components/instructor-nav";
 import {
+  PLAN_ACTION_LABEL,
   STATUS_META,
   bloomLabel,
   formatDateTime,
   pct,
   pendingLabel,
+  planReasonText,
   type LearnerSummary,
   type LearnerSummaryLo,
+  type PlanDecision,
 } from "@/lib/mastery";
 
 interface Props {
@@ -31,6 +34,32 @@ function StatCard({ label, value, hint }: { label: string; value: string; hint?:
       <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
       <p className="mt-1 text-2xl font-semibold text-slate-900">{value}</p>
       {hint && <p className="mt-1 text-xs text-slate-500">{hint}</p>}
+    </div>
+  );
+}
+
+function PlanCard({ plan, los }: { plan: PlanDecision; los: LearnerSummaryLo[] }) {
+  const codeOf = (loId: string | null) => los.find((lo) => lo.loId === loId)?.code ?? null;
+  const code = codeOf(plan.loId);
+
+  return (
+    <div className="rounded-2xl border border-sky-200 bg-sky-50 p-5 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-wide text-sky-700">
+        Gợi ý tiếp theo
+      </p>
+      <p className="mt-1 text-lg font-semibold text-slate-900">
+        {PLAN_ACTION_LABEL[plan.action]}
+        {code ? ` · ${code}` : ""}
+      </p>
+      <p className="mt-1 text-sm text-slate-600">{planReasonText(plan.reason)}</p>
+      {plan.alternatives.length > 0 && (
+        <p className="mt-2 text-xs text-slate-500">
+          Hoặc:{" "}
+          {plan.alternatives
+            .map((alt) => `${PLAN_ACTION_LABEL[alt.action]} ${codeOf(alt.loId) ?? ""}`.trim())
+            .join(" · ")}
+        </p>
+      )}
     </div>
   );
 }
@@ -112,6 +141,22 @@ function LoCard({ lo, threshold }: { lo: LearnerSummaryLo; threshold: number }) 
       {lo.firstMasteredAt && (
         <p className="mt-3 text-xs text-emerald-700">
           Đạt lần đầu: {formatDateTime(lo.firstMasteredAt)}
+        </p>
+      )}
+      {lo.review?.due && (
+        <p
+          className={`mt-3 text-xs font-semibold ${
+            lo.review.needsRecheck ? "text-rose-700" : "text-sky-700"
+          }`}
+        >
+          {lo.review.needsRecheck
+            ? "Cần kiểm tra lại dù từng đạt — nên ôn ngay."
+            : `Đến hạn ôn tập (hộp ${lo.review.box + 1}).`}
+        </p>
+      )}
+      {lo.review && !lo.review.due && (
+        <p className="mt-3 text-xs text-slate-500">
+          Ôn tiếp theo: {formatDateTime(lo.review.dueAt)} (hộp {lo.review.box + 1})
         </p>
       )}
       {pending && <p className="mt-3 text-xs text-amber-700">Đang chờ: {pending}</p>}
@@ -198,6 +243,10 @@ export default async function LearnerMasteryPage({ params, searchParams }: Props
             hint="trên các LO đã có quan sát"
           />
           <StatCard label="Tổng quan sát" value={String(totalObservations)} />
+        </div>
+
+        <div className="mt-6">
+          <PlanCard plan={summary.plan} los={summary.los} />
         </div>
 
         <div className="mt-6 space-y-4">
