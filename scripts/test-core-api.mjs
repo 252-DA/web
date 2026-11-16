@@ -119,12 +119,14 @@ try {
   });
 
   // Verify real EdDSA JWT minted, trailing slash stripped from CORE_API_INTERNAL_URL, cache/signal set
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   await coreApi.listCourses(claims);
   const firstReq = captured.pop();
   assert.equal(firstReq.origin, "http://core-api.internal:4000");
   assert.equal(firstReq.method, "GET");
   assert.equal(firstReq.pathname, "/api/courses");
   assert.equal(firstReq.headers["content-type"], undefined);
+  assert.match(firstReq.headers["x-request-id"] || "", uuidRe);
   assert.equal(firstReq.cache, "no-store");
   assert.ok(firstReq.signal instanceof AbortSignal);
   assert.ok(firstReq.headers.authorization?.startsWith("Bearer "));
@@ -247,6 +249,7 @@ try {
       `SKIP: không thấy source core-api tại ${CONTROLLER_DIR} (đặt CORE_API_SRC trỏ tới core-api/src); bỏ qua phần so route hai chiều.`,
     );
   }
+  const seenRequestIds = new Set();
   for (const [fn, args, expectedMethod, expectedPath, expectedQuery, expectedBody] of calls) {
     captured.length = 0;
     await coreApi[fn](...args);
@@ -256,6 +259,10 @@ try {
     assert.equal(req.pathname, expectedPath, `${fn} path`);
     assert.deepEqual(req.searchParams, expectedQuery, `${fn} query params`);
     assert.deepEqual(req.body, expectedBody, `${fn} JSON body`);
+    const reqId = req.headers["x-request-id"];
+    assert.match(reqId || "", uuidRe, `${fn} x-request-id must be a valid UUID`);
+    assert.ok(!seenRequestIds.has(reqId), `${fn} x-request-id must be unique per call`);
+    seenRequestIds.add(reqId);
     if (expectedBody === undefined) {
       assert.equal(req.headers["content-type"], undefined, `${fn} should omit content-type when no body`);
     }
@@ -301,7 +308,7 @@ try {
     );
   await assert.rejects(
     () => coreApi.listCourses(claims),
-    (err) => err instanceof CoreApiError && err.status === 400 && err.message === "courseId must be a string; title should not be empty" && coreApiErrorStatus(err) === 400,
+    (err) => err instanceof CoreApiError && err.status === 400 && err.message === "courseId must be a string; title should not be empty" && coreApiErrorStatus(err) === 400 && uuidRe.test(err.requestId || ""),
   );
 
   nextResponse = () =>
@@ -344,7 +351,7 @@ try {
   };
   await assert.rejects(
     () => coreApi.listCourses(claims),
-    (err) => err instanceof CoreApiError && err.status === 502 && coreApiErrorStatus(err, 500) === 502,
+    (err) => err instanceof CoreApiError && err.status === 502 && coreApiErrorStatus(err, 500) === 502 && uuidRe.test(err.requestId || ""),
   );
 
   console.log(
