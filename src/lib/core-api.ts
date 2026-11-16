@@ -208,9 +208,9 @@ export const coreApi = {
       },
       body,
       // LtiService.seedAttempts đẩy số lần làm sang Canvas đồng bộ
-      // (CanvasApiClient.setAssignmentAllowedAttempts, timeout 60s) sau khi giao
-      // dịch launch commit — MEDIUM chỉ ngang một nhịp Canvas nên không đủ.
-      LONG_TIMEOUT_MS,
+      // (CanvasApiClient.setAssignmentAllowedAttempts, WRITE_TIMEOUT_MS = 5s)
+      // sau khi giao dịch launch commit — MEDIUM là đủ dư.
+      MEDIUM_TIMEOUT_MS,
     ),
   listCourses: <TResponse = unknown>(claims: BffClaims) =>
     getCore<TResponse>("/api/courses", claims),
