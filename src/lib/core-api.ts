@@ -207,7 +207,10 @@ export const coreApi = {
         scope: "admin",
       },
       body,
-      MEDIUM_TIMEOUT_MS,
+      // LtiService.seedAttempts đẩy số lần làm sang Canvas đồng bộ
+      // (CanvasApiClient.setAssignmentAllowedAttempts, timeout 60s) sau khi giao
+      // dịch launch commit — MEDIUM chỉ ngang một nhịp Canvas nên không đủ.
+      LONG_TIMEOUT_MS,
     ),
   listCourses: <TResponse = unknown>(claims: BffClaims) =>
     getCore<TResponse>("/api/courses", claims),
@@ -435,8 +438,11 @@ export const coreApi = {
   getChatCatalog: <TResponse = unknown>(courseId: string, claims: BffClaims) =>
     getCore<TResponse>(withQuery("/api/chat/catalog", { courseId }), claims),
   // Chấm bài luận nộp file qua LTI Asset Processor (docs/essay-asset-processor.md).
+  // POST /api/essay-processors gọi Canvas đồng bộ: LtiServicesClient.registerNoticeHandler
+  // xin token LTI rồi PUT Platform Notification Service (timeout 60s mỗi nhịp, thử lại
+  // 1 lần khi 401) — web phải chờ lâu hơn tổng timeout đó.
   createEssayProcessor: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
-    postCore<TResponse>("/api/essay-processors", claims, body),
+    postCore<TResponse>("/api/essay-processors", claims, body, LONG_TIMEOUT_MS),
   updateEssayProcessor: <TResponse = unknown>(body: unknown, claims: BffClaims) => {
     const { id, rest } = splitId(body, "processorId");
     return patchCore<TResponse>(`/api/essay-processors/${enc(id)}`, claims, rest);

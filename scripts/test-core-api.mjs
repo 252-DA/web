@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { exportPKCS8, generateKeyPair, jwtVerify } from "jose";
 
-const CONTROLLER_DIR = new URL("../../core-api/src/", import.meta.url);
+// Source core-api để so route hai chiều. Mặc định là checkout cạnh web/;
+// trong container web không có sẵn -> đặt CORE_API_SRC, nếu không phần so
+// route sẽ bị bỏ qua (các phần JWT/lỗi/method vẫn chạy và vẫn fail nếu sai).
+const CONTROLLER_DIR = process.env.CORE_API_SRC
+  ? resolve(process.env.CORE_API_SRC)
+  : fileURLToPath(new URL("../../core-api/src/", import.meta.url));
 
 const asModule = (source) =>
   `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
@@ -20,7 +26,13 @@ const transpile = (source) =>
 
 async function collectCoreApiRoutes() {
   const routes = [];
-  const entries = await readdir(CONTROLLER_DIR, { withFileTypes: true, recursive: true });
+  let entries;
+  try {
+    entries = await readdir(CONTROLLER_DIR, { withFileTypes: true, recursive: true });
+  } catch (err) {
+    if (err?.code === "ENOENT") return null;
+    throw err;
+  }
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".controller.ts")) continue;
     const fullPath = join(entry.parentPath || entry.path, entry.name);
@@ -230,6 +242,11 @@ try {
   );
 
   const coreApiRoutes = await collectCoreApiRoutes();
+  if (coreApiRoutes === null) {
+    console.log(
+      `SKIP: không thấy source core-api tại ${CONTROLLER_DIR} (đặt CORE_API_SRC trỏ tới core-api/src); bỏ qua phần so route hai chiều.`,
+    );
+  }
   for (const [fn, args, expectedMethod, expectedPath, expectedQuery, expectedBody] of calls) {
     captured.length = 0;
     await coreApi[fn](...args);
@@ -242,10 +259,25 @@ try {
     if (expectedBody === undefined) {
       assert.equal(req.headers["content-type"], undefined, `${fn} should omit content-type when no body`);
     }
-    const matchedRoute = coreApiRoutes.find(
-      (r) => r.method === expectedMethod && r.pattern.test(expectedPath),
+    if (coreApiRoutes) {
+      const matchedRoute = coreApiRoutes.find(
+        (r) => r.method === expectedMethod && r.pattern.test(expectedPath),
+      );
+      assert.ok(matchedRoute, `${fn} (${expectedMethod} ${expectedPath}) has matching core-api controller route`);
+    }
+  }
+
+  // Chiều ngược: mọi route trong *.controller.ts phải được ít nhất một method
+  // của coreApi gọi tới (không còn route thừa phía core-api).
+  if (coreApiRoutes) {
+    const uncalled = coreApiRoutes.filter(
+      (r) => !calls.some(([, , method, path]) => method === r.method && r.pattern.test(path)),
     );
-    assert.ok(matchedRoute, `${fn} (${expectedMethod} ${expectedPath}) has matching core-api controller route`);
+    assert.deepEqual(
+      uncalled.map((r) => `${r.method} ${r.path} (${r.file})`),
+      [],
+      "Mọi route controller của core-api phải được coreApi gọi tới",
+    );
   }
 
   // Verify special system claims for launchSync and receiveAssetNotices
@@ -315,7 +347,11 @@ try {
     (err) => err instanceof CoreApiError && err.status === 502 && coreApiErrorStatus(err, 500) === 502,
   );
 
-  console.log(`PASS: ${calls.length} coreApi HTTP methods, JWT claims, error mapping, and core-api controller route parity verified.`);
+  console.log(
+    coreApiRoutes
+      ? `PASS: ${calls.length} coreApi HTTP methods, JWT claims, error mapping, so route hai chiều với ${coreApiRoutes.length} controller route.`
+      : `PASS: ${calls.length} coreApi HTTP methods, JWT claims, error mapping (đã bỏ qua so route).`,
+  );
 } finally {
   globalThis.fetch = originalFetch;
   await rm(dir, { recursive: true, force: true });

@@ -36,7 +36,7 @@ const nextConfig: NextConfig = {
     ...[toolHost()].filter((host): host is string => Boolean(host) && host !== "localhost"),
   ],
   // Allow server-side connections to Docker services
-  serverExternalPackages: ["pg", "ioredis"],
+  serverExternalPackages: ["ioredis"],
 };
 
 export default nextConfig;
