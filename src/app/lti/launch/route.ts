@@ -16,7 +16,7 @@ import {
   parseSubmissionViewUri,
   submissionViewPath,
 } from "@/lib/lti-submission-view";
-import { coreApi, CoreApiError } from "@/lib/core-api";
+import { coreApi, CoreApiError, coreApiErrorStatus } from "@/lib/core-api";
 import { deepLinkSettings, deepLinkKey, LTI_CLAIM, type DeepLinkState } from "@/lib/lti-deep-link";
 import {
   acceptsAssetProcessor,
@@ -438,13 +438,7 @@ export async function POST(request: NextRequest) {
     const status =
       err instanceof UnsupportedRoleError
         ? 403
-        : err instanceof CoreApiError
-          ? err.status === 403 || err.status === 7
-            ? 403
-            : err.status >= 500
-              ? 502
-              : 400
-          : 400;
+        : coreApiErrorStatus(err, 400);
     return new Response(
       JSON.stringify({ error: "LTI launch failed", detail: errorMessage(err) }),
       { status, headers: { "Content-Type": "application/json" } }

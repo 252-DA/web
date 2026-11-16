@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { CoreApiError, coreApi, claimsFromSession } from "@/lib/core-api";
+import { coreApi, claimsFromSession, coreApiErrorStatus } from "@/lib/core-api";
 import { readManageSession } from "@/lib/session";
 import { LTI_CONFIG } from "@/lib/lti";
 import type { QuizBuilderContext } from "@/lib/canvas-quiz";
@@ -32,9 +32,7 @@ function fail(error: unknown) {
   const status =
     error instanceof BuilderError
       ? error.status
-      : error instanceof CoreApiError
-        ? ({ 3: 400, 5: 404, 7: 403, 16: 401 }[error.status] ?? 502)
-        : 500;
+      : coreApiErrorStatus(error, 500);
   return NextResponse.json(
     { error: error instanceof Error ? error.message : "Không xử lý được yêu cầu." },
     { status },

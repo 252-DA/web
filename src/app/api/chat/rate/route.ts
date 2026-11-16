@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { CoreApiError, claimsFromSession, coreApi } from "@/lib/core-api";
+import { CoreApiError, claimsFromSession, coreApi, coreApiErrorStatus } from "@/lib/core-api";
 import { LTI_CONFIG } from "@/lib/lti";
 import { readSessionFromRequest } from "@/lib/route-session";
 
@@ -27,6 +27,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof CoreApiError ? String(error.body) : "Không lưu được đánh giá.";
-    return NextResponse.json({ error: message }, { status: 400 });
+    return NextResponse.json({ error: message }, { status: coreApiErrorStatus(error, 400) });
   }
 }

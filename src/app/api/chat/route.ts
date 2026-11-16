@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { CoreApiError, claimsFromSession, coreApi } from "@/lib/core-api";
+import { CoreApiError, claimsFromSession, coreApi, coreApiErrorStatus } from "@/lib/core-api";
 import { LTI_CONFIG } from "@/lib/lti";
 import {
   isChatMode,
@@ -142,7 +142,7 @@ export async function GET(request: NextRequest) {
     );
   } catch (error) {
     if (error instanceof CoreApiError) {
-      const httpStatus = error.status === 7 ? 403 : error.status === 5 ? 404 : 400;
+      const httpStatus = coreApiErrorStatus(error, 400);
       return NextResponse.json({ error: String(error.body) }, { status: httpStatus });
     }
     return NextResponse.json({ error: "Không tải được hội thoại." }, { status: 500 });
@@ -182,7 +182,7 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof CoreApiError) {
-      const httpStatus = error.status === 7 ? 403 : error.status === 5 ? 404 : 400;
+      const httpStatus = coreApiErrorStatus(error, 400);
       return NextResponse.json({ error: String(error.body) }, { status: httpStatus });
     }
     return NextResponse.json({ error: "Không xóa được cuộc trò chuyện." }, { status: 400 });
@@ -256,7 +256,7 @@ export async function POST(request: NextRequest) {
     }
   } catch (error) {
     if (error instanceof CoreApiError) {
-      const httpStatus = error.status === 7 ? 403 : error.status === 5 ? 404 : 400;
+      const httpStatus = coreApiErrorStatus(error, 400);
       return NextResponse.json({ error: String(error.body) }, { status: httpStatus });
     }
     return NextResponse.json({ error: "Không đọc được cuộc trò chuyện." }, { status: 400 });

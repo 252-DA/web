@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { CoreApiError, coreApi, claimsFromSession } from "@/lib/core-api";
+import { coreApi, claimsFromSession, coreApiErrorStatus } from "@/lib/core-api";
 import { readSessionFromRequest, isValidOrigin } from "@/lib/route-session";
 
 interface Context {
@@ -19,10 +19,7 @@ export async function GET(request: NextRequest, context: Context) {
     const data = await coreApi.getMicroContent(id, claims);
     return NextResponse.json(data);
   } catch (error) {
-    const status =
-      error instanceof CoreApiError
-        ? { 3: 400, 5: 404, 7: 403, 16: 401 }[error.status] ?? 502
-        : 400;
+    const status = coreApiErrorStatus(error, 400);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Lỗi khi lấy thông tin." },
       { status },
@@ -81,10 +78,7 @@ export async function PUT(request: NextRequest, context: Context) {
 
     return NextResponse.json(updated);
   } catch (error) {
-    const status =
-      error instanceof CoreApiError
-        ? { 3: 400, 5: 404, 7: 403, 16: 401 }[error.status] ?? 502
-        : 400;
+    const status = coreApiErrorStatus(error, 400);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Không thể cập nhật." },
       { status },
@@ -110,10 +104,7 @@ export async function DELETE(request: NextRequest, context: Context) {
     const result = await coreApi.deleteMicroContent(id, claims);
     return NextResponse.json(result);
   } catch (error) {
-    const status =
-      error instanceof CoreApiError
-        ? { 3: 400, 5: 404, 7: 403, 16: 401 }[error.status] ?? 502
-        : 400;
+    const status = coreApiErrorStatus(error, 400);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Không thể xoá." },
       { status },

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { CoreApiError, coreApi, claimsFromSession } from "@/lib/core-api";
+import { coreApi, claimsFromSession, coreApiErrorStatus } from "@/lib/core-api";
 import { readSessionFromRequest, isValidOrigin } from "@/lib/route-session";
 
 export async function POST(request: NextRequest) {
@@ -51,10 +51,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(created);
   } catch (error) {
-    const status =
-      error instanceof CoreApiError
-        ? { 3: 400, 7: 403, 16: 401 }[error.status] ?? 502
-        : 400;
+    const status = coreApiErrorStatus(error, 400);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Không thể tạo Micro Content." },
       { status },

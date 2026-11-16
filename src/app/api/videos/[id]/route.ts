@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { CoreApiError, coreApi, claimsFromSession } from "@/lib/core-api";
+import { coreApi, claimsFromSession, coreApiErrorStatus } from "@/lib/core-api";
 import { readSessionFromRequest, isValidOrigin } from "@/lib/route-session";
 
 export async function GET(
@@ -17,10 +17,7 @@ export async function GET(
     const asset = await coreApi.getVideoAsset(id, claims);
     return NextResponse.json(asset);
   } catch (error) {
-    const status =
-      error instanceof CoreApiError
-        ? ({ 3: 400, 5: 404, 7: 403, 16: 401 }[error.status] ?? 502)
-        : 500;
+    const status = coreApiErrorStatus(error, 500);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Không tìm thấy video." },
       { status },
@@ -60,10 +57,7 @@ export async function PATCH(
 
     return NextResponse.json(updated);
   } catch (error) {
-    const status =
-      error instanceof CoreApiError
-        ? ({ 3: 400, 5: 404, 7: 403, 16: 401 }[error.status] ?? 502)
-        : 500;
+    const status = coreApiErrorStatus(error, 500);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Không thể cập nhật video." },
       { status },
@@ -90,10 +84,7 @@ export async function DELETE(
     const result = await coreApi.deleteVideoAsset(id, claims);
     return NextResponse.json(result);
   } catch (error) {
-    const status =
-      error instanceof CoreApiError
-        ? ({ 3: 400, 5: 404, 7: 403, 16: 401 }[error.status] ?? 502)
-        : 500;
+    const status = coreApiErrorStatus(error, 500);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Không thể xoá video." },
       { status },

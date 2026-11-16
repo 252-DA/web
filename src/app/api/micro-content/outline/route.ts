@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { CoreApiError, coreApi, claimsFromSession } from "@/lib/core-api";
+import { coreApi, claimsFromSession, coreApiErrorStatus } from "@/lib/core-api";
 import { isValidOrigin, readSessionFromRequest } from "@/lib/route-session";
 
 export async function GET(request: NextRequest) {
@@ -20,10 +20,7 @@ export async function GET(request: NextRequest) {
     );
     return NextResponse.json(Array.isArray(list) ? list : []);
   } catch (error) {
-    const status =
-      error instanceof CoreApiError
-        ? ({ 3: 400, 5: 404, 7: 403, 16: 401 }[error.status] ?? 502)
-        : 500;
+    const status = coreApiErrorStatus(error, 500);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Không thể tải trạng thái tách slide." },
       { status },
@@ -55,10 +52,7 @@ export async function POST(request: NextRequest) {
     );
     return NextResponse.json(created);
   } catch (error) {
-    const status =
-      error instanceof CoreApiError
-        ? ({ 3: 400, 5: 404, 7: 403, 16: 401 }[error.status] ?? 502)
-        : 400;
+    const status = coreApiErrorStatus(error, 400);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Không thể gửi yêu cầu tách nội dung slide." },
       { status },

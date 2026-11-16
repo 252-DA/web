@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { CoreApiError, coreApi, claimsFromSession } from "@/lib/core-api";
+import { coreApi, claimsFromSession, coreApiErrorStatus } from "@/lib/core-api";
 import { readSessionFromRequest } from "@/lib/route-session";
 import { LTI_CONFIG } from "@/lib/lti";
 
@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
       ),
     );
   } catch (error) {
-    const status = error instanceof CoreApiError ? ({ 3: 400, 5: 404, 7: 403, 16: 401 }[error.status] ?? 502) : 400;
+    const status = coreApiErrorStatus(error, 400);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Không bắt đầu được bài kiểm tra." },
       { status },

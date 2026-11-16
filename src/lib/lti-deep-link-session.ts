@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { readManageSession } from "./session";
 import { redis } from "./redis";
 import { deepLinkKey, type DeepLinkState } from "./lti-deep-link";
-import { CoreApiError, claimsFromSession, coreApi } from "./core-api";
+import { claimsFromSession, coreApi, coreApiErrorStatus } from "./core-api";
 import type { CanvasQuizContext } from "./canvas-quiz";
 import type { ContentGenerationRequest } from "./quiz";
 import { LTI_CONFIG } from "./lti";
@@ -108,9 +108,7 @@ export function deepLinkError(error: unknown) {
   const status =
     error instanceof DeepLinkError
       ? error.status
-      : error instanceof CoreApiError
-        ? ({ 3: 400, 7: 403, 5: 404, 6: 409, 16: 401 }[error.status] ?? 502)
-        : 500;
+      : coreApiErrorStatus(error, 500);
   return NextResponse.json(
     { error: error instanceof Error ? error.message : "Không thể xử lý quiz." },
     { status },
