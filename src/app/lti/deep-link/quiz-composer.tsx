@@ -93,13 +93,15 @@ export function QuizComposer({
 }) {
   useFitCanvasModal();
   const [data, setData] = useState(initial);
+  // Mở từ trang Assignments thì không có module: bài tập tạo thẳng trong Canvas.
+  const target = data.module ? "module" : "Canvas";
   const [chapterId, setChapterId] = useState(initial.chapter?.chapter_id || "");
   const [pickingChapter, setPickingChapter] = useState(!initial.chapter);
   const [loIds, setLoIds] = useState(initial.learningOutcomes.map((lo) => lo.lo_id));
   const [perLo, setPerLo] = useState(3);
   const [bloom, setBloom] = useState<Bloom>("auto");
   const [questionType, setQuestionType] = useState<QuestionType>("MCQ_SINGLE");
-  const [title, setTitle] = useState(`Quiz ${initial.module.name}`);
+  const [title, setTitle] = useState(initial.module ? `Quiz ${initial.module.name}` : "Quiz mới");
   const [settings, setSettings] = useState<QuizSettingsDraft>(DEFAULT_SETTINGS);
   const [selected, setSelected] = useState<string[]>([]);
   const [pending, setPending] = useState<string[]>([]);
@@ -306,11 +308,11 @@ export function QuizComposer({
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-wider text-sky-700">DA Platform · Quiz cho Canvas</p>
             <h1 className="mt-0.5 truncate text-lg font-semibold">
-              {chapter ? `Quiz cho Chương ${chapter.code} · ${chapter.title}` : `Chọn chương cho “${data.module.name}”`}
+              {chapter ? `Quiz cho Chương ${chapter.code} · ${chapter.title}` : data.module ? `Chọn chương cho “${data.module.name}”` : "Chọn chương cho bài tập"}
             </h1>
             {chapter && !pickingChapter && (
               <p className="text-xs text-slate-500">
-                Nhận từ module “{data.module.name}” ·{" "}
+                {data.module ? `Nhận từ module “${data.module.name}” · ` : ""}
                 <button type="button" className="text-sky-700 underline" onClick={() => setPickingChapter(true)}>
                   Đổi chương
                 </button>
@@ -321,7 +323,7 @@ export function QuizComposer({
             <a
               href={endpoint("/manage/quizzes/new", flowId, sid)}
               className="text-sm font-medium text-sky-700 underline"
-              title="Soạn đề nhiều chương theo ma trận LO × Bloom ngay trong hộp thoại này, lưu xong thêm thẳng vào module"
+              title={`Soạn đề nhiều chương theo ma trận LO × Bloom ngay trong hộp thoại này, lưu xong thêm thẳng vào ${target}`}
             >
               Soạn đề nâng cao
             </a>
@@ -360,7 +362,7 @@ export function QuizComposer({
               aria-label="Chương trong đề cương"
             >
               <option value="" disabled>
-                Chọn chương tương ứng với module này…
+                {data.module ? "Chọn chương tương ứng với module này…" : "Chọn chương cho bài tập này…"}
               </option>
               {data.chapters.map((c) => (
                 <option key={c.chapter_id} value={c.chapter_id}>
@@ -409,7 +411,7 @@ export function QuizComposer({
                       ? `Kiểm tra${set.settings.dueAt ? `, hạn ${shortTime.format(new Date(set.settings.dueAt))}` : ""}`
                       : "Luyện tập"}
                   </span>
-                  <button className={ghostButton}>Thêm vào module</button>
+                  <button className={ghostButton}>Thêm vào {target}</button>
                 </form>
               ))}
             </div>
@@ -425,20 +427,34 @@ export function QuizComposer({
           <section className="rounded-xl border border-slate-200 bg-white p-4">
             <h2 className="text-sm font-semibold">Micro Content của khóa học</h2>
             <div className="mt-2 divide-y divide-slate-200">
-              {data.microContents.map((mc) => (
-                <form key={mc.id} action={returnUrl} method="post" className="flex items-center justify-between gap-3 py-2">
-                  <input type="hidden" name="microContentId" value={mc.id} />
-                  <div>
-                    <span className="text-sm font-medium text-slate-900">{mc.title}</span>
-                    <span className="ml-2 text-xs text-slate-500">
-                      · {mc.questionCount} câu hỏi · {mc.videoStatus === "READY" ? "Video sẵn sàng" : "Chưa có video"}
-                    </span>
-                  </div>
-                  <button type="submit" className={ghostButton}>
-                    Thêm vào module
-                  </button>
-                </form>
-              ))}
+              {data.microContents.map((mc) => {
+                const isPublished = mc.status === "PUBLISHED";
+                return (
+                  <form key={mc.id} action={returnUrl} method="post" className="flex items-center justify-between gap-3 py-2.5">
+                    <input type="hidden" name="microContentId" value={mc.id} />
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-medium text-slate-900">{mc.title}</span>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                            isPublished
+                              ? "bg-emerald-50 text-emerald-700"
+                              : "bg-amber-50 text-amber-800"
+                          }`}
+                        >
+                          {isPublished ? "Đã xuất bản" : "Bản nháp (học viên chưa xem được)"}
+                        </span>
+                      </div>
+                      <span className="mt-0.5 block text-xs text-slate-500">
+                        {mc.questionCount} câu hỏi · {mc.videoStatus === "READY" ? "Video sẵn sàng" : "Chưa có video"}
+                      </span>
+                    </div>
+                    <button type="submit" className={ghostButton}>
+                      Thêm vào {target}
+                    </button>
+                  </form>
+                );
+              })}
             </div>
           </section>
         )}
@@ -603,8 +619,8 @@ export function QuizComposer({
             )}
             {/* Canvas luôn tạo bài tập Deep Linking ở trạng thái unpublished và
                 từ chối ghi điểm cho tới khi được publish. */}
-            <p className="mt-0.5 truncate text-xs text-amber-700" title="Canvas tạo bài tập ở trạng thái chưa publish; sinh viên chỉ thấy bài và điểm chỉ vào sổ sau khi bấm Publish trong module.">
-              Canvas tạo bài ở trạng thái chưa publish — nhớ bấm Publish trong module.
+            <p className="mt-0.5 truncate text-xs text-amber-700" title="Canvas tạo bài tập ở trạng thái chưa publish; sinh viên chỉ thấy bài và điểm chỉ vào sổ sau khi bấm Publish trong Canvas.">
+              Canvas tạo bài ở trạng thái chưa publish — nhớ bấm Publish{data.module ? " trong module" : ""}.
             </p>
           </div>
           <form action={returnUrl} method="post" className="flex shrink-0 items-center gap-2">
@@ -625,8 +641,8 @@ export function QuizComposer({
               className="whitespace-nowrap rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:bg-slate-200 disabled:text-slate-500"
             >
               {selected.length
-                ? `Thêm ${settings.mode === "exam" ? "bài kiểm tra" : `${selected.length} câu`} vào module`
-                : "Thêm vào module"}
+                ? `Thêm ${settings.mode === "exam" ? "bài kiểm tra" : `${selected.length} câu`} vào ${target}`
+                : `Thêm vào ${target}`}
             </button>
           </form>
           <form action={returnUrl} method="post">

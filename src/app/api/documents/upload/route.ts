@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { CoreApiError, coreApi, claimsFromSession } from "@/lib/core-api";
+import { coreApi, claimsFromSession, coreApiErrorStatus } from "@/lib/core-api";
 import { readSessionFromRequest } from "@/lib/route-session";
 
 type UploadSession = {
@@ -115,7 +115,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result, { status: 202 });
   } catch (error: unknown) {
     console.error("Document upload failed", error);
-    const status = error instanceof CoreApiError ? 502 : 500;
+    const status = coreApiErrorStatus(error, 500);
     return uploadError(request, errorMessage(error), status);
   }
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { CoreApiError, coreApi, claimsFromSession } from "@/lib/core-api";
+import { coreApi, claimsFromSession, coreApiErrorStatus } from "@/lib/core-api";
 import { readSessionFromRequest, isValidOrigin } from "@/lib/route-session";
 
 export async function POST(request: NextRequest) {
@@ -26,16 +26,32 @@ export async function POST(request: NextRequest) {
         passingScore: body.passingScore !== undefined ? Number(body.passingScore) : 70,
         requiredWatchPercent:
           body.requiredWatchPercent !== undefined ? Number(body.requiredWatchPercent) : 90,
+        ...(body.sourceDocumentId !== undefined
+          ? { sourceDocumentId: body.sourceDocumentId }
+          : {}),
+        ...(body.sourcePageFrom !== undefined
+          ? {
+              sourcePageFrom:
+                body.sourcePageFrom === null ? null : Number(body.sourcePageFrom),
+            }
+          : {}),
+        ...(body.sourcePageTo !== undefined
+          ? {
+              sourcePageTo:
+                body.sourcePageTo === null ? null : Number(body.sourcePageTo),
+            }
+          : {}),
+        ...(body.loId !== undefined ? { loId: body.loId } : {}),
+        ...(body.position !== undefined
+          ? { position: body.position === null ? null : Number(body.position) }
+          : {}),
       },
       claims,
     );
 
     return NextResponse.json(created);
   } catch (error) {
-    const status =
-      error instanceof CoreApiError
-        ? { 3: 400, 7: 403, 16: 401 }[error.status] ?? 502
-        : 400;
+    const status = coreApiErrorStatus(error, 400);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Không thể tạo Micro Content." },
       { status },

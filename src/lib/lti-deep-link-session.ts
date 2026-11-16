@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { readManageSession } from "./session";
 import { redis } from "./redis";
 import { deepLinkKey, type DeepLinkState } from "./lti-deep-link";
-import { CoreApiError, claimsFromSession, coreApi } from "./core-api";
+import { claimsFromSession, coreApi, coreApiErrorStatus } from "./core-api";
 import type { CanvasQuizContext } from "./canvas-quiz";
 import type { ContentGenerationRequest } from "./quiz";
 import { LTI_CONFIG } from "./lti";
@@ -73,16 +73,34 @@ export async function loadQuizContext(
       access.claims,
     ),
     coreApi
-      .listMicroContents<{ items: any[] }>(access.flow.courseId, access.claims)
-      .catch(() => ({ items: [] })),
+      .listMicroContents<unknown>(access.flow.courseId, access.claims)
+      .catch(() => []),
   ]);
-  const microContents = (microContentsRes.items || []).map((m: any) => ({
-    id: m.id,
-    title: m.title,
-    status: m.status,
-    videoStatus: m.videoStatus,
-    questionCount: m.questionCount ?? (m.questions?.length || 0),
-  }));
+  type RawMicroContent = {
+    id: string;
+    title: string;
+    status: string;
+    videoStatus: string;
+    questionCount?: number;
+    questions?: unknown[];
+  };
+  const rawMicroContents: RawMicroContent[] = Array.isArray(microContentsRes)
+    ? (microContentsRes as RawMicroContent[])
+    : microContentsRes &&
+        typeof microContentsRes === "object" &&
+        "items" in microContentsRes &&
+        Array.isArray((microContentsRes as { items?: unknown }).items)
+      ? (microContentsRes as { items: RawMicroContent[] }).items
+      : [];
+  const microContents = rawMicroContents
+    .map((m) => ({
+      id: m.id,
+      title: m.title,
+      status: m.status,
+      videoStatus: m.videoStatus,
+      questionCount: m.questionCount ?? (m.questions?.length || 0),
+    }))
+    .sort((a, b) => Number(b.status === "PUBLISHED") - Number(a.status === "PUBLISHED"));
   return { ...context, requests, microContents };
 }
 
@@ -90,9 +108,7 @@ export function deepLinkError(error: unknown) {
   const status =
     error instanceof DeepLinkError
       ? error.status
-      : error instanceof CoreApiError
-        ? ({ 3: 400, 7: 403, 5: 404, 6: 409, 16: 401 }[error.status] ?? 502)
-        : 500;
+      : coreApiErrorStatus(error, 500);
   return NextResponse.json(
     { error: error instanceof Error ? error.message : "Không thể xử lý quiz." },
     { status },

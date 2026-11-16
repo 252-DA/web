@@ -6,7 +6,7 @@ import {
   jwtVerify,
   type JWTPayload,
 } from "jose";
-import { LTI_CONFIG } from "./lti";
+import { LTI_CONFIG, knownClientIds } from "./lti";
 
 /**
  * Xác minh JWT do platform ký: id_token của mỗi lần launch và các thông báo
@@ -49,7 +49,7 @@ function assertPlatformClaims(payload: JWTPayload): void {
     : typeof payload.aud === "string"
       ? [payload.aud]
       : [];
-  if (!audiences.includes(LTI_CONFIG.clientId)) {
+  if (!audiences.some((aud) => knownClientIds().includes(aud))) {
     throw new Error("Unexpected LTI audience");
   }
 
@@ -74,13 +74,27 @@ async function fetchPlatformJwks(): Promise<Jwks> {
   return jwks;
 }
 
+// Một bộ JWKS dùng chung cho cả process: jose giữ bản cache (mặc định 10 phút)
+// và chỉ tải lại khi gặp kid lạ. Tạo mới mỗi lần verify thì lần launch nào cũng
+// tải JWKS của platform, mà với Canvas local là một vòng qua tunnel Cloudflare.
+let platformJwks: ReturnType<typeof createRemoteJWKSet> | null = null;
+
+function getPlatformJwks(): ReturnType<typeof createRemoteJWKSet> {
+  platformJwks ??= createRemoteJWKSet(new URL(LTI_CONFIG.jwksUrl));
+  return platformJwks;
+}
+
 async function verifyWeakRsaPlatformJwt(idToken: string): Promise<JWTPayload> {
   const header = decodeProtectedHeader(idToken);
   if (header.alg !== "RS256") {
     throw new Error(`Unsupported LTI id_token alg: ${String(header.alg || "")}`);
   }
 
-  const jwks = await fetchPlatformJwks();
+  // jose vừa tải JWKS rồi mới từ chối khóa yếu, nên dùng lại bản nó đang giữ.
+  const cached = getPlatformJwks().jwks() as Jwks | undefined;
+  const jwks = cached?.keys?.some((key) => !header.kid || key.kid === header.kid)
+    ? cached
+    : await fetchPlatformJwks();
   const jwk = jwks.keys?.find(
     (key) =>
       key.kty === "RSA" &&
@@ -113,12 +127,10 @@ async function verifyWeakRsaPlatformJwt(idToken: string): Promise<JWTPayload> {
 }
 
 export async function verifyPlatformJwt(idToken: string): Promise<JWTPayload> {
-  const platformJwks = createRemoteJWKSet(new URL(LTI_CONFIG.jwksUrl));
-
   try {
-    const { payload } = await jwtVerify(idToken, platformJwks, {
+    const { payload } = await jwtVerify(idToken, getPlatformJwks(), {
       issuer: LTI_CONFIG.issuer,
-      audience: LTI_CONFIG.clientId,
+      audience: knownClientIds(),
     });
     return payload;
   } catch (error: unknown) {

@@ -9,12 +9,24 @@ export type DeepLinkState = {
   userId: string;
   courseId: string;
   deploymentId: string;
-  moduleId: string;
+  /** Vắng khi mở từ trang Assignment: bài tập tạo ngoài module nào. */
+  moduleId?: string;
   returnUrl: string;
   data?: string;
   selectionId: string;
 };
 export const deepLinkKey = (id: string) => `lti:deep-link:${id}`;
+
+/**
+ * Placement mở từ trang Assignment: Canvas không gắn module nào vào launch.
+ * course_assignments_menu tạo thẳng Assignment từ content item có lineItem
+ * (Lti::IMS::Concerns::DeepLinkingModules); assignment_selection là hộp chọn
+ * công cụ ở trang sửa Assignment.
+ */
+const ASSIGNMENT_PLACEMENTS = new Set([
+  "course_assignments_menu",
+  "assignment_selection",
+]);
 
 /** Only call with a signature-, state- and nonce-verified platform payload. */
 export function deepLinkSettings(payload: JWTPayload, platformUrl: string) {
@@ -41,23 +53,50 @@ export function deepLinkSettings(payload: JWTPayload, platformUrl: string) {
     throw new Error("Địa chỉ trả về không thuộc Canvas đã cấu hình.");
   if (settings.data !== undefined && typeof settings.data !== "string")
     throw new Error("Deep Linking data không hợp lệ.");
+  // Custom field canvas_module_id=$Canvas.module.id (scripts/setup_canvas_lti.rb)
+  // do Canvas ký trong id_token. Canvas chỉ mở rộng nó khi launch từ một module
+  // item, không có ở launch Deep Linking của module_menu_modal (khi đó biến giữ
+  // nguyên chuỗi "$Canvas.module.id"), nên chỉ nhận khi là id số.
+  const custom = payload[`${LTI_CLAIM}custom`];
+  const claimed =
+    custom && typeof custom === "object" && !Array.isArray(custom)
+      ? (custom as Record<string, unknown>).canvas_module_id
+      : undefined;
   // Canvas embeds its one-use module selection in ?data=JWT. The outer LTI
   // signature authenticates this exact URL. Decode only to identify the module;
   // return the original URL untouched so Canvas verifies its own opaque token.
   const opaque = url.searchParams.get("data");
-  const moduleId = opaque
-    ? decodeJwt(opaque).context_module_id
-    : url.searchParams.get("context_module_id");
-  if (!/^[1-9]\d*$/.test(String(moduleId ?? "")))
+  const opaqueClaims: JWTPayload = opaque ? decodeJwt(opaque) : {};
+  const moduleId = /^[1-9]\d*$/.test(String(claimed ?? ""))
+    ? claimed
+    : opaque
+      ? opaqueClaims.context_module_id
+      : url.searchParams.get("context_module_id");
+  const hasModule = /^[1-9]\d*$/.test(String(moduleId ?? ""));
+  // Không có module chỉ chấp nhận khi launch rõ ràng đến từ trang Assignment:
+  // placement của Canvas (trong ?data=JWT) hoặc biến canvas_assignment_id. Mọi
+  // trường hợp khác là mở nhầm chỗ nên vẫn báo lỗi như trước.
+  const placement =
+    typeof opaqueClaims.placement === "string"
+      ? opaqueClaims.placement
+      : (url.searchParams.get("placement") ?? "");
+  const customRecord =
+    custom && typeof custom === "object" && !Array.isArray(custom)
+      ? (custom as Record<string, unknown>)
+      : {};
+  const fromAssignment =
+    ASSIGNMENT_PLACEMENTS.has(placement) ||
+    /^[1-9]\d*$/.test(String(customRecord.canvas_assignment_id ?? ""));
+  if (!hasModule && !fromAssignment)
     throw new Error(
-      "Hãy mở Sinh quiz bằng DA từ menu ⋮ của một module Canvas.",
+      "Hãy mở Sinh quiz bằng DA từ menu ⋮ của một module Canvas hoặc từ trang Assignments.",
     );
   const deploymentId = payload[`${LTI_CLAIM}deployment_id`];
   if (typeof deploymentId !== "string" || !deploymentId)
     throw new Error("Thiếu deployment Canvas.");
   return {
     returnUrl: settings.deep_link_return_url,
-    moduleId: String(moduleId),
+    ...(hasModule ? { moduleId: String(moduleId) } : {}),
     deploymentId,
     ...(typeof settings.data === "string" ? { data: settings.data } : {}),
   };

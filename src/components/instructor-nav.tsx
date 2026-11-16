@@ -1,4 +1,4 @@
-type InstructorNavItem = "dashboard" | "curriculum" | "documents" | "quizzes" | "review" | "micro-content" | "learner" | "models";
+type InstructorNavItem = "dashboard" | "curriculum" | "documents" | "quizzes" | "review" | "micro-content" | "media" | "mastery" | "learner" | "chat" | "models";
 
 type Props = {
   active: InstructorNavItem;
@@ -21,9 +21,12 @@ export function InstructorNav({ active, courseId, sid, isAdmin }: Props) {
     { key: "curriculum", label: "Đề cương", href: "/manage/curriculum" },
     { key: "documents", label: "Documents", href: "/manage/documents" },
     { key: "micro-content", label: "Micro Content", href: "/manage/micro-content" },
+    { key: "media", label: "Kho Video", href: "/manage/media" },
     { key: "quizzes", label: "Soạn đề", href: "/manage/quizzes/new" },
     { key: "review", label: "Quiz & Review", href: "/manage/review" },
+    { key: "mastery", label: "Mức nắm LO", href: "/manage/mastery" },
     { key: "learner", label: "Learner preview", href: `/learn/courses/${courseId}` },
+    { key: "chat", label: "Trợ giảng AI", href: "/manage/chat" },
     ...(isAdmin ? [{ key: "models", label: "Model AI", href: "/manage/models" }] : []),
   ] as const;
 

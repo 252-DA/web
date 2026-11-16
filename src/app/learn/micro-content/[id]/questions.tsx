@@ -1,21 +1,46 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AnswerInput } from "@/components/answer-input";
 import { AnswerReview } from "@/components/answer-review";
 import { isAnswered } from "@/lib/question-types";
 
+export interface LearnQuestion {
+  id: string;
+  position: number;
+  type: string;
+  question: string;
+  options: unknown;
+}
+
+export interface AttemptResultQuestion {
+  questionId?: string;
+  question: string;
+  type: string;
+  options: unknown;
+  correctAnswer: unknown;
+  chosenAnswer: unknown;
+  score?: number | null;
+  isCorrect?: boolean;
+  feedback?: string | null;
+  explanation?: string | null;
+  gradingStatus?: string;
+}
+
+export interface AttemptResult {
+  attemptId: string;
+  score: number;
+  passed: boolean;
+  gradingStatus?: string;
+  questions?: AttemptResultQuestion[];
+}
+
 interface Props {
   microContentId: string;
-  questions: Array<{
-    id: string;
-    position: number;
-    type: string;
-    question: string;
-    options: unknown;
-  }>;
+  questions: LearnQuestion[];
   requiredWatchPercent: number;
   passingScore: number;
+  initialResult?: AttemptResult | null;
   sid: string;
   isStaff: boolean;
   unlocked: boolean;
@@ -27,6 +52,7 @@ export function MicroContentQuestions({
   questions,
   requiredWatchPercent,
   passingScore,
+  initialResult = null,
   sid,
   isStaff,
   unlocked,
@@ -35,7 +61,37 @@ export function MicroContentQuestions({
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<any | null>(null);
+  const [result, setResult] = useState<AttemptResult | null>(initialResult);
+
+  // Tự động thăm dò kết quả khi còn câu tự luận đang chờ AI chấm
+  useEffect(() => {
+    if (!result?.attemptId || result.gradingStatus !== "PENDING") return;
+
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await fetch(
+          `/api/micro-content/${microContentId}/result?attemptId=${encodeURIComponent(
+            result.attemptId,
+          )}&sid=${encodeURIComponent(sid)}`,
+          { cache: "no-store" },
+        );
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (!cancelled && data.result) {
+          setResult(data.result);
+        }
+      } catch {
+        // Bỏ qua lỗi mạng thoáng qua khi polling
+      }
+    };
+
+    const timer = setInterval(poll, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [result?.attemptId, result?.gradingStatus, microContentId, sid]);
 
   const canAttempt = isStaff || unlocked || requiredWatchPercent === 0;
 
@@ -155,7 +211,7 @@ export function MicroContentQuestions({
         {/* Xem lại từng câu hỏi kèm đáp án và giải thích */}
         <div className="space-y-4">
           <h3 className="text-base font-semibold text-slate-900">Chi tiết bài làm:</h3>
-          {result.questions?.map((item: any, idx: number) => (
+          {result.questions?.map((item, idx) => (
             <div
               key={item.questionId || idx}
               className={`rounded-xl border bg-white p-5 shadow-sm space-y-3 ${
@@ -178,13 +234,17 @@ export function MicroContentQuestions({
                     <span className="rounded bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700 border border-amber-200">
                       AI đang chấm
                     </span>
+                  ) : item.gradingStatus === "NEEDS_REVIEW" ? (
+                    <span className="rounded bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800 border border-amber-200">
+                      Chờ giảng viên duyệt
+                    </span>
                   ) : item.isCorrect ? (
                     <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 border border-emerald-200">
-                      ✓ Đúng (+{item.score}đ)
+                      ✓ Đúng ({item.score}đ)
                     </span>
                   ) : (
                     <span className="rounded bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700 border border-rose-200">
-                      ✕ Sai (0đ)
+                      ✕ Chưa đạt ({item.score ?? 0}đ)
                     </span>
                   )}
                 </div>

@@ -84,29 +84,27 @@ export async function POST(request: NextRequest) {
           "Chương này đang sinh câu hỏi. Chờ xong rồi sinh tiếp.",
           409,
         );
-      const created = [];
-      for (const lo of los as NonNullable<(typeof los)[number]>[]) {
+      const scopes = (los as NonNullable<(typeof los)[number]>[]).map((lo) => {
         const level = bloomLevel === "auto" ? lo.bloom_level || 2 : bloomLevel;
-        created.push(
-          await coreApi.createContentGenerationRequest(
-            {
-              courseId: active.flow.courseId,
-              type: "quiz",
-              scope: {
-                target_kind: "lo",
-                target_code: lo.lo_id,
-                target_label: lo.code,
-                chapter_id: context.chapter.chapter_id,
-                count: body.count,
-                bloom_level: BLOOM[level] ?? "understand",
-                style: "quiz",
-                question_type: questionType,
-              },
-            },
-            active.claims,
-          ),
-        );
-      }
+        return {
+          target_kind: "lo",
+          target_code: lo.lo_id,
+          target_label: lo.code,
+          chapter_id: context.chapter!.chapter_id,
+          count: body.count,
+          bloom_level: BLOOM[level] ?? "understand",
+          style: "quiz",
+          question_type: questionType,
+        };
+      });
+      const created = await coreApi.createContentGenerationRequest(
+        {
+          courseId: active.flow.courseId,
+          type: "quiz",
+          scopes,
+        },
+        active.claims,
+      );
       return NextResponse.json({ requests: created }, { status: 202 });
     }
     if (body.action === "approveMany") {
@@ -121,8 +119,10 @@ export async function POST(request: NextRequest) {
         throw new DeepLinkError(
           `${invalid.length} câu có đáp án không khớp lựa chọn. Sửa trước khi giữ.`,
         );
-      for (const quiz of quizzes)
-        await coreApi.approveQuizItem(quiz!.quiz_id, active.claims);
+      await coreApi.approveQuizItems(
+        quizzes.map((quiz) => quiz!.quiz_id),
+        active.claims,
+      );
       return NextResponse.json({ approved: quizzes.length });
     }
     const quiz = context.quizItems.find((item) => item.quiz_id === body.quizId);

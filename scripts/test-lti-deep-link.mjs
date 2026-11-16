@@ -36,6 +36,7 @@ try {
   const {
     deepLinkSettings,
     signDeepLinkResponse,
+    signDeepLinkMicroContentResponse,
     deepLinkForm,
     LTI_CLAIM,
     DL_CLAIM,
@@ -53,6 +54,41 @@ try {
   const settings = deepLinkSettings(payload, "https://canvas.test");
   assert.equal(settings.moduleId, "17");
   assert.equal(settings.returnUrl, returnUrl);
+  // Custom claim canvas_module_id: thắng ?data=JWT khi là id số...
+  const withCustom = (custom, overrides = {}) => ({
+    ...payload,
+    [`${LTI_CLAIM}custom`]: custom,
+    [`${DL_CLAIM}deep_linking_settings`]: {
+      ...payload[`${DL_CLAIM}deep_linking_settings`],
+      ...overrides,
+    },
+  });
+  assert.equal(
+    deepLinkSettings(withCustom({ canvas_module_id: "23" }), "https://canvas.test").moduleId,
+    "23",
+  );
+  // ...và dùng được cả khi return URL không mang module nào.
+  assert.equal(
+    deepLinkSettings(
+      withCustom(
+        { canvas_module_id: "23" },
+        { deep_link_return_url: "https://canvas.test/courses/3/deep_linking_response" },
+      ),
+      "https://canvas.test",
+    ).moduleId,
+    "23",
+  );
+  // Biến chưa mở rộng (Deep Linking từ module_menu_modal) thì lùi về ?data=JWT.
+  for (const unexpanded of ["$Canvas.module.id", "", "abc", "0", undefined]) {
+    assert.equal(
+      deepLinkSettings(withCustom({ canvas_module_id: unexpanded }), "https://canvas.test").moduleId,
+      "17",
+    );
+  }
+  assert.equal(
+    deepLinkSettings(withCustom(undefined), "https://canvas.test").moduleId,
+    "17",
+  );
   const malformed = (overrides) => ({
     ...payload,
     [`${DL_CLAIM}deep_linking_settings`]: {
@@ -84,6 +120,70 @@ try {
       ),
     /module/,
   );
+  // Mở từ trang Assignments: Canvas không gắn module. Chấp nhận khi placement
+  // (trong ?data=JWT đã ký) hoặc canvas_assignment_id cho thấy đúng là trang đó.
+  const unsignedData = (claims) =>
+    `${Buffer.from('{"alg":"HS256"}').toString("base64url")}.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.opaque`;
+  const assignmentsReturn = (claims) =>
+    `https://canvas.test/courses/3/deep_linking_response?data=${unsignedData(claims)}`;
+  const noModule = deepLinkSettings(
+    malformed({
+      deep_link_return_url: assignmentsReturn({ placement: "course_assignments_menu" }),
+    }),
+    "https://canvas.test",
+  );
+  assert.equal(noModule.moduleId, undefined);
+  assert.ok(!("moduleId" in noModule), "moduleId vắng hẳn, không phải chuỗi 'undefined'");
+  assert.equal(noModule.deploymentId, "deployment-1");
+  assert.equal(
+    deepLinkSettings(
+      malformed({
+        deep_link_return_url: assignmentsReturn({ placement: "assignment_selection" }),
+      }),
+      "https://canvas.test",
+    ).moduleId,
+    undefined,
+  );
+  assert.equal(
+    deepLinkSettings(
+      withCustom(
+        { canvas_assignment_id: "42" },
+        { deep_link_return_url: "https://canvas.test/courses/3/deep_linking_response" },
+      ),
+      "https://canvas.test",
+    ).moduleId,
+    undefined,
+  );
+  // Có cả module lẫn placement Assignment thì vẫn lấy module.
+  assert.equal(
+    deepLinkSettings(
+      malformed({
+        deep_link_return_url: assignmentsReturn({
+          placement: "course_assignments_menu",
+          context_module_id: 31,
+        }),
+      }),
+      "https://canvas.test",
+    ).moduleId,
+    "31",
+  );
+  // Không có module và không đến từ trang Assignment thì vẫn là mở nhầm chỗ.
+  for (const [label, returnUrl, custom] of [
+    ["placement khác", assignmentsReturn({ placement: "module_index_menu_modal" }), undefined],
+    ["không placement", assignmentsReturn({}), undefined],
+    ["biến chưa mở rộng", "https://canvas.test/courses/3/deep_linking_response", { canvas_assignment_id: "$Canvas.assignment.id" }],
+    ["id không phải số", "https://canvas.test/courses/3/deep_linking_response", { canvas_assignment_id: "0" }],
+  ]) {
+    assert.throws(
+      () =>
+        deepLinkSettings(
+          withCustom(custom, { deep_link_return_url: returnUrl }),
+          "https://canvas.test",
+        ),
+      /module/,
+      label,
+    );
+  }
   const state = {
     ...settings,
     userId: "user",
@@ -215,8 +315,28 @@ try {
   assert.match(processorItem.text, /3 tiêu chí, tối đa 10 điểm/);
   assert.ok(processorItem.text.length <= 255);
 
+  const { payload: microResponse } = await jwtVerify(
+    await signDeepLinkMicroContentResponse(state, {
+      micro_content_id: "mc-1",
+      title: "Spark RDD cơ bản",
+      questionCount: 3,
+    }),
+    publicKey,
+    { issuer: "client-123", audience: "https://canvas.instructure.com" },
+  );
+  const microItem = microResponse[`${DL_CLAIM}content_items`][0];
+  assert.equal(microItem.type, "ltiResourceLink");
+  assert.equal(microItem.url, "https://tool.test/learn/micro-content/mc-1");
+  assert.equal(microItem.title, "Spark RDD cơ bản");
+  assert.equal(microItem.lineItem, undefined);
+  assert.deepEqual(microItem.custom, {
+    target_kind: "micro_content",
+    target_id: "mc-1",
+  });
+  assert.match(microItem.text, /Micro Content: Video bài giảng & câu hỏi củng cố \(3 câu\)/);
+
   console.log(
-    "PASS: module context, return-origin validation, signed response, grade item, exam dates/points, cancellation, safe form, asset processor settings/PNS/content item",
+    "PASS: module context, return-origin validation, signed response, grade item, exam dates/points, cancellation, safe form, micro-content link, asset processor settings/PNS/content item",
   );
 } finally {
   await rm(dir, { recursive: true, force: true });

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { CoreApiError, claimsFromSession, coreApi } from "@/lib/core-api";
+import { CoreApiError, claimsFromSession, coreApi, coreApiErrorStatus } from "@/lib/core-api";
 import { isActiveRequest } from "@/lib/quiz";
 import { isQuestionType } from "@/lib/question-types";
 import { readSessionFromRequest } from "@/lib/route-session";
@@ -51,8 +51,7 @@ function asProgress(request: GenerationRequestSummary): GenerationRequestSummary
 
 function errorResponse(error: unknown, fallback: string) {
   if (error instanceof CoreApiError) {
-    const status = error.status === 3 ? 400 : error.status === 7 ? 403 : error.status === 16 ? 401 : 502;
-    return NextResponse.json({ error: String(error.body || fallback) }, { status });
+    return NextResponse.json({ error: String(error.body || fallback) }, { status: coreApiErrorStatus(error) });
   }
   return NextResponse.json(
     { error: error instanceof Error ? error.message : fallback },

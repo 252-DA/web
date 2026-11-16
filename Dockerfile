@@ -15,7 +15,6 @@ ENV NODE_ENV=development
 ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY web/ .
-COPY contracts/proto ./proto
 
 CMD ["pnpm", "dev", "--hostname", "0.0.0.0"]
 
@@ -23,7 +22,6 @@ CMD ["pnpm", "dev", "--hostname", "0.0.0.0"]
 FROM deps AS builder
 
 COPY web/ .
-COPY contracts/proto ./proto
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
@@ -43,7 +41,6 @@ RUN addgroup --system --gid 1001 nodejs && \
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/proto ./proto
 
 USER nextjs
 

@@ -37,7 +37,8 @@ export type SavedQuizSet = {
 };
 
 export type CanvasQuizContext = {
-  module: { id: string; name: string };
+  /** null khi mở từ trang Assignments: bài tập tạo ngoài module nào. */
+  module: { id: string; name: string } | null;
   chapters: ChapterOption[];
   chapter: ChapterOption | null;
   learningOutcomes: LearningOutcomeOption[];
@@ -103,6 +104,25 @@ export type LearnerQuizResults = {
   }> | null;
 };
 
+/** Bài làm của một lượt nộp cho SpeedGrader (core-api QuizSetService.submissionDetail). */
+export type QuizSubmissionDetail = {
+  quiz_set_id: string;
+  title: string;
+  mode: "practice" | "exam";
+  submissionId: string;
+  student: { userId: string; name: string };
+  attemptedAt: string;
+  attemptNumber: number;
+  attemptCount: number;
+  /** Phần trăm đúng 0–100. */
+  score: number;
+  /** Điểm tối đa của Assignment trên Canvas và điểm quy theo thang đó. */
+  pointsPossible: number;
+  scoreGiven: number;
+  sync: GradeSync;
+  review: NonNullable<LearnerQuizResults["review"]>;
+};
+
 /** Một lượt làm bài kiểm tra: đề theo thứ tự đã xáo, không kèm đáp án. */
 export type ExamSession = {
   sessionId: string;
@@ -132,17 +152,25 @@ export type StaffQuizResults = {
     averageScore: number | null;
   }>;
   byLo: Array<{ lo_id: string; code: string; statement: string; questions: number; correctRate: number | null }>;
+  /** Cả lớp theo danh sách lớp Canvas; người chưa làm bài có attempts 0 và các điểm rỗng. */
   students: Array<{
     userId: string;
     name: string;
     attempts: number;
-    bestScore: number;
-    latestScore: number;
-    lastAttemptedAt: string;
-    sync: GradeSync;
+    bestScore: number | null;
+    latestScore: number | null;
+    lastAttemptedAt: string | null;
+    sync: GradeSync | null;
+    /** false: đã làm bài nhưng không còn trong lớp. */
+    inClass: boolean;
   }>;
   summary: {
+    /** Số sinh viên đã nộp ít nhất một lượt, kể cả người không còn trong lớp. */
     students: number;
+    /** Quy mô lớp: sinh viên đang học. */
+    classSize: number;
+    /** Số sinh viên đang học đã làm bài (tử số của "đã làm x/n"). */
+    attemptedInClass: number;
     submissions: number;
     averageBest: number | null;
     waitingForPublish: number;

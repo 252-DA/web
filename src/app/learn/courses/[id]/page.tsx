@@ -49,6 +49,20 @@ export default async function CoursePage({ params, searchParams }: Props) {
         </div>
       </header>
       <section className="mx-auto max-w-5xl px-4 py-6">
+        {session.chatbotEnabled && (
+          <a
+            href={withSid(`/learn/courses/${id}/chat`, sid)}
+            className="mb-4 block rounded border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-medium text-sky-900 hover:border-sky-400"
+          >
+            Trợ giảng AI: hỏi về tài liệu khóa học →
+          </a>
+        )}
+        <a
+          href={withSid(`/learn/courses/${id}/mastery`, sid)}
+          className="mb-4 block rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-900 hover:border-emerald-400"
+        >
+          Mức nắm của tôi: xem tiến độ theo từng chuẩn đầu ra →
+        </a>
         <div className="overflow-hidden rounded border border-slate-200 bg-white">
           <div className="border-b border-slate-200 p-4">
             <h2 className="font-semibold">Lessons đã publish</h2>

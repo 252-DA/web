@@ -8,14 +8,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:lti": "node scripts/test-lti-deep-link.mjs"
+    "test:core-api": "node scripts/test-core-api.mjs",
+    "test:lti": "node scripts/test-lti-deep-link.mjs && node scripts/test-lti-roles.mjs"
   },
   "dependencies": {
-    "@grpc/grpc-js": "^1.14.3",
-    "@grpc/proto-loader": "^0.8.1",
     "ioredis": "^5.10.1",
     "jose": "^6.2.3",
-    "ltijs": "^5.9.9",
     "next": "16.2.6",
     "react": "19.2.4",
     "react-dom": "19.2.4"
