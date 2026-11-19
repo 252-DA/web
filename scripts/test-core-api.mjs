@@ -244,6 +244,10 @@ try {
     ["unshareQuestionBank", [{ bankId: "b1", granteeType: "USER", granteeId: "u2" }, claims], "DELETE", "/api/question-banks/b1/shares", { granteeType: "USER", granteeId: "u2" }, undefined],
     ["forkQuestionBankItem", [{ bankId: "b1", quizId: "q1", targetBankId: "b2" }, claims], "POST", "/api/question-banks/b1/items/q1/fork", {}, { targetBankId: "b2" }],
     ["retireQuestionBankItem", [{ bankId: "b1", quizId: "q1", restore: true }, claims], "POST", "/api/question-banks/b1/items/q1/retire", {}, { restore: true }],
+    ["exportQuestionBankToCanvas", [{ bankId: "b1", courseId: "c2" }, claims], "POST", "/api/question-banks/b1/canvas-export", {}, { courseId: "c2" }],
+    ["listQuestionBankSyncJobs", ["b1", claims], "GET", "/api/question-banks/b1/sync-jobs", {}, undefined],
+    ["getQuestionBankSyncJob", ["j1", claims], "GET", "/api/question-bank-sync-jobs/j1", {}, undefined],
+    ["listCanvasQuestionBanks", ["c1", claims], "GET", "/api/canvas/question-banks", { courseId: "c1" }, undefined],
     ["listQuizItemVersions", ["q1", claims], "GET", "/api/quiz-items/q1/versions", {}, undefined],
   ];
 

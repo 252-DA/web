@@ -154,3 +154,59 @@ export function formatOriginAndModel(origin?: string | null, provenance?: unknow
     null;
   return model ? `${base} (${model})` : base;
 }
+
+/** Nhãn nút xuất. Tên tạm theo kế hoạch P4, đổi ở đây nếu chốt tên khác. */
+export const CANVAS_EXPORT_LABEL = "Xuất sang Canvas";
+
+export type QuestionBankSyncStatus = "QUEUED" | "RUNNING" | "WAITING_LMS" | "COMPLETED" | "FAILED";
+
+export type QuestionBankExportCounts = {
+  exported?: number;
+  updated?: number;
+  unsupported?: number;
+  failed?: number;
+  retired_on_canvas?: number;
+  canvas_issues?: number;
+};
+
+/** Một lần xuất/nhập Canvas (bảng question_bank_sync_jobs của core-api). */
+export type QuestionBankSyncJob = {
+  job_id: string;
+  bank_id: string;
+  direction: "EXPORT" | "IMPORT";
+  status: QuestionBankSyncStatus;
+  counts: QuestionBankExportCounts;
+  report: Array<{ quiz_id?: string; reason: string }>;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export function isSyncJobActive(job: QuestionBankSyncJob | null): boolean {
+  return Boolean(job && ["QUEUED", "RUNNING", "WAITING_LMS"].includes(job.status));
+}
+
+/** Một dòng tóm tắt lần xuất cho giảng viên. */
+export function describeExportJob(job: QuestionBankSyncJob): string {
+  switch (job.status) {
+    case "QUEUED":
+      return "Đang chờ xuất sang Canvas…";
+    case "RUNNING":
+      return "Đang đóng gói câu hỏi…";
+    case "WAITING_LMS":
+      return "Canvas đang nhập gói câu hỏi…";
+    case "FAILED":
+      return `Xuất sang Canvas thất bại: ${job.last_error ?? "lỗi không rõ"}`;
+    case "COMPLETED": {
+      const c = job.counts ?? {};
+      const parts = [
+        `${c.exported ?? 0} câu mới`,
+        `${c.updated ?? 0} câu cập nhật`,
+        c.unsupported ? `${c.unsupported} câu không xuất được` : null,
+        c.failed ? `${c.failed} câu không thấy bên Canvas sau khi nhập` : null,
+        c.retired_on_canvas ? `${c.retired_on_canvas} câu đã ngừng dùng vẫn còn bên Canvas` : null,
+      ].filter(Boolean);
+      return `Đã xuất sang Canvas: ${parts.join(", ")}.`;
+    }
+  }
+}

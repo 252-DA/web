@@ -671,4 +671,19 @@ export const coreApi = {
     ),
   listQuizItemVersions: <TResponse = unknown>(quizId: string, claims: BffClaims) =>
     getCore<TResponse>(`/api/quiz-items/${enc(quizId)}/versions`, claims),
+  exportQuestionBankToCanvas: <TResponse = unknown>(
+    body: { bankId: string; courseId?: string },
+    claims: BffClaims,
+  ) =>
+    postCore<TResponse>(
+      `/api/question-banks/${enc(body.bankId)}/canvas-export`,
+      claims,
+      body.courseId ? { courseId: body.courseId } : {},
+    ),
+  listQuestionBankSyncJobs: <TResponse = unknown>(bankId: string, claims: BffClaims) =>
+    getCore<TResponse>(`/api/question-banks/${enc(bankId)}/sync-jobs`, claims),
+  getQuestionBankSyncJob: <TResponse = unknown>(jobId: string, claims: BffClaims) =>
+    getCore<TResponse>(`/api/question-bank-sync-jobs/${enc(jobId)}`, claims),
+  listCanvasQuestionBanks: <TResponse = unknown>(courseId: string, claims: BffClaims) =>
+    getCore<TResponse>(withQuery("/api/canvas/question-banks", { courseId }), claims),
 };

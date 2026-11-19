@@ -1,10 +1,13 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { AnswerReview } from "@/components/answer-review";
 import { QuestionEditFields } from "@/components/question-edit-fields";
 import {
+  CANVAS_EXPORT_LABEL,
+  describeExportJob,
   formatOriginAndModel,
+  isSyncJobActive,
   ITEM_STATUS_LABELS,
   ORIGIN_LABELS,
   ROLE_LABELS,
@@ -13,6 +16,7 @@ import {
   type BankRole,
   type BankShareCandidates,
   type QuestionBankDetail,
+  type QuestionBankSyncJob,
   type QuizItemVersionsResponse,
 } from "@/lib/question-bank";
 import { editFromForm, QUESTION_TYPES, questionTypeLabel, type QuestionType } from "@/lib/question-types";
@@ -94,6 +98,82 @@ export function BankDetailClient({
 
   const canEdit = bank.role === "EDIT";
   const canUse = bank.role === "EDIT" || bank.role === "USE";
+
+  // Xuất sang Canvas: job chạy nền ở core-api, trang hỏi lại trạng thái mỗi 3 giây.
+  const [exportJob, setExportJob] = useState<QuestionBankSyncJob | null>(null);
+  const [startingExport, setStartingExport] = useState(false);
+  const [showExportReport, setShowExportReport] = useState(false);
+  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pollTimer.current) clearTimeout(pollTimer.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!canEdit) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(withSid(`/api/banks/${initialBank.bank_id}/sync-jobs`, sid), { cache: "no-store" });
+        if (!res.ok) return;
+        const jobs = (await res.json()) as QuestionBankSyncJob[];
+        const last = jobs.find((j) => j.direction === "EXPORT") ?? null;
+        if (cancelled || !last) return;
+        setExportJob(last);
+        if (isSyncJobActive(last)) schedulePoll(last.job_id);
+      } catch {
+        // Không có lịch sử thì thôi, nút xuất vẫn dùng được.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Chỉ chạy một lần khi mở trang.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function schedulePoll(jobId: string) {
+    if (pollTimer.current) clearTimeout(pollTimer.current);
+    pollTimer.current = setTimeout(() => void pollExportJob(jobId), 3000);
+  }
+
+  async function pollExportJob(jobId: string) {
+    try {
+      const res = await fetch(withSid(`/api/question-bank-sync-jobs/${jobId}`, sid), { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không đọc được trạng thái xuất Canvas.");
+      const job = data as QuestionBankSyncJob;
+      setExportJob(job);
+      if (isSyncJobActive(job)) {
+        schedulePoll(jobId);
+        return;
+      }
+      setNotice({ kind: job.status === "COMPLETED" ? "success" : "error", text: describeExportJob(job) });
+      if (job.status === "COMPLETED") await reloadItems();
+    } catch (err) {
+      setNotice({ kind: "error", text: err instanceof Error ? err.message : "Không đọc được trạng thái xuất Canvas." });
+    }
+  }
+
+  async function handleExportToCanvas() {
+    setStartingExport(true);
+    setNotice(null);
+    try {
+      const res = await fetch(withSid(`/api/banks/${bank.bank_id}/canvas-export`, sid), { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không xuất được ngân hàng sang Canvas.");
+      const job = data as QuestionBankSyncJob;
+      setExportJob(job);
+      setShowExportReport(false);
+      if (isSyncJobActive(job)) schedulePoll(job.job_id);
+    } catch (err) {
+      setNotice({ kind: "error", text: err instanceof Error ? err.message : "Không xuất được ngân hàng sang Canvas." });
+    } finally {
+      setStartingExport(false);
+    }
+  }
 
   async function reloadItems(overrides?: {
     lo?: string;
@@ -345,6 +425,15 @@ export function BankDetailClient({
               </button>
               <button
                 type="button"
+                onClick={handleExportToCanvas}
+                disabled={startingExport || isSyncJobActive(exportJob)}
+                title="Chỉ xuất câu đã duyệt; mỗi LO thành một ngân hàng câu hỏi trong khoá Canvas đang mở."
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {CANVAS_EXPORT_LABEL}
+              </button>
+              <button
+                type="button"
                 onClick={() => setShowCreateItem((v) => !v)}
                 className="rounded-lg bg-slate-950 px-3.5 py-1.5 text-sm font-semibold text-white hover:bg-slate-800"
               >
@@ -354,6 +443,41 @@ export function BankDetailClient({
           )}
         </div>
       </div>
+
+      {exportJob && (isSyncJobActive(exportJob) || exportJob.report?.length > 0) && (
+        <div className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              {isSyncJobActive(exportJob) && (
+                <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-sky-500" aria-hidden />
+              )}
+              {describeExportJob(exportJob)}
+            </span>
+            {!isSyncJobActive(exportJob) && exportJob.report?.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowExportReport((v) => !v)}
+                className="text-xs font-medium text-sky-700 hover:underline"
+              >
+                {showExportReport ? "Ẩn chi tiết" : `Xem chi tiết (${exportJob.report.length})`}
+              </button>
+            )}
+          </div>
+          {showExportReport && (
+            <ul className="mt-2 max-h-60 list-disc space-y-1 overflow-y-auto pl-5 text-xs text-slate-600">
+              {exportJob.report.map((entry, i) => {
+                const q = entry.quiz_id ? items.find((it) => it.quiz_id === entry.quiz_id) : undefined;
+                return (
+                  <li key={`${entry.quiz_id ?? "canvas"}-${i}`}>
+                    {q ? <span className="font-medium">{q.question.slice(0, 80)}: </span> : null}
+                    {entry.reason}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
 
       {notice && (
         <div
@@ -740,6 +864,9 @@ export function BankDetailClient({
               item.provenance && typeof item.provenance.duplicate_of === "string"
                 ? item.provenance.duplicate_of
                 : null;
+            const canvasLinks = (item.lms_links ?? []).filter(
+              (l) => l.direction === "EXPORT" && l.lms_type === "canvas",
+            );
             return (
               <article key={item.quiz_id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -768,6 +895,22 @@ export function BankDetailClient({
                       Trùng văn bản với câu khác trong ngân hàng
                     </span>
                   )}
+                  {canvasLinks.length > 0 &&
+                    (canvasLinks.some((l) => l.stale) ? (
+                      <span
+                        className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 font-medium text-amber-800"
+                        title="Câu đã sửa sau lần xuất gần nhất; xuất lại để Canvas nhận bản mới."
+                      >
+                        Canvas đang cũ
+                      </span>
+                    ) : (
+                      <span
+                        className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-medium text-emerald-800"
+                        title={canvasLinks.map((l) => l.ext_bank_title).filter(Boolean).join(", ")}
+                      >
+                        Đã có trên Canvas
+                      </span>
+                    ))}
                 </div>
 
                 <h3 className="mt-3 text-base font-semibold text-slate-950">{item.question}</h3>
