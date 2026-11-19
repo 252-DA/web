@@ -1,0 +1,42 @@
+import { NextRequest, NextResponse } from "next/server";
+import { coreApi, claimsFromSession, coreApiErrorStatus } from "@/lib/core-api";
+import { readSessionFromRequest, isValidOrigin } from "@/lib/route-session";
+
+interface Context {
+  params: Promise<{ id: string }>;
+}
+
+export async function PUT(request: NextRequest, context: Context) {
+  const activeSession = await readSessionFromRequest(request);
+  if (!activeSession) {
+    return NextResponse.json({ error: "Session expired" }, { status: 401 });
+  }
+
+  try {
+    if (!isValidOrigin(request)) {
+      return NextResponse.json({ error: "Nguồn yêu cầu không hợp lệ." }, { status: 403 });
+    }
+
+    const { id } = await context.params;
+    const session = activeSession.session;
+    const claims = claimsFromSession(session);
+    const body = await request.json();
+
+    const result = await coreApi.saveMicroContentQuestions(
+      {
+        microContentId: id,
+        questions: body.questions || [],
+      },
+      claims,
+    );
+
+    return NextResponse.json(result);
+  } catch (error) {
+    const status = coreApiErrorStatus(error, 400);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Không thể lưu câu hỏi." },
+      { status },
+    );
+  }
+}
+

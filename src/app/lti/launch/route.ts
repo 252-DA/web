@@ -1,36 +1,49 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createPublicKey, createVerify, randomUUID } from "crypto";
-import {
-  createRemoteJWKSet,
-  decodeJwt,
-  decodeProtectedHeader,
-  jwtVerify,
-  type JWTPayload,
-} from "jose";
+import { randomUUID } from "crypto";
+import { verifyPlatformJwt } from "@/lib/lti-platform-jwt";
 import { redis } from "@/lib/redis";
-import { LTI_CONFIG } from "@/lib/lti";
-import { LtiSession, SESSION_TTL, sessionKey } from "@/lib/session";
-import { coreApi, CoreApiError } from "@/lib/core-api";
+import { LTI_CONFIG, isKnownDeployment } from "@/lib/lti";
+import {
+  LtiSession,
+  SESSION_MAX_AGE,
+  SESSION_TTL,
+  sessionKey,
+  sessionTtlFor,
+} from "@/lib/session";
+import { mapRoles, UnsupportedRoleError } from "@/lib/lti-roles";
+import {
+  canViewSubmissions,
+  parseSubmissionViewUri,
+  submissionViewPath,
+} from "@/lib/lti-submission-view";
+import { coreApi, CoreApiError, coreApiErrorStatus } from "@/lib/core-api";
+import { deepLinkSettings, deepLinkKey, LTI_CLAIM, type DeepLinkState } from "@/lib/lti-deep-link";
+import {
+  acceptsAssetProcessor,
+  assetProcessorKey,
+  assetProcessorSettings,
+  PROCESSOR_CUSTOM_KEY,
+  type AssetProcessorFlow,
+} from "@/lib/lti-asset-processor";
 
 const CUSTOM_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/custom";
 const CONTEXT_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/context";
 const DEPLOYMENT_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/deployment_id";
 const RESOURCE_LINK_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/resource_link";
 const AGS_CLAIM = "https://purl.imsglobal.org/spec/lti-ags/claim/endpoint";
+const NRPS_CLAIM = "https://purl.imsglobal.org/spec/lti-nrps/claim/namesroleservice";
 const ROLES_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/roles";
+const TARGET_LINK_URI_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/target_link_uri";
 type CookieSameSite = "lax" | "strict" | "none";
-type Jwk = {
-  kty?: string;
-  kid?: string;
-  n?: string;
-  e?: string;
-  [key: string]: unknown;
+type LaunchSyncResponse = {
+  internalUserId: string;
+  internalCourseId: string;
+  lmsCourseRefId?: string;
+  courseRole: "instructor" | "learner" | "ta" | "observer";
+  resourceLinkId?: string;
+  /** Thời gian làm của bài kiểm tra đang mở (phút), để phiên thi sống đủ lâu. */
+  examTimeLimitMinutes?: number;
 };
-type Jwks = {
-  keys?: Jwk[];
-};
-type PlatformRole = "instructor" | "learner" | "administrator";
-type CourseRole = "instructor" | "learner" | "ta" | "observer";
 
 function parsePipeCustom(custom: string): Record<string, string> {
   const parsed: Record<string, string> = {};
@@ -64,33 +77,14 @@ function parseRoles(value: unknown): string[] {
   return typeof value === "string" ? [value] : [];
 }
 
-function mapRoles(roles: string[]): { role: PlatformRole; courseRole: CourseRole } {
-  const joined = roles.join(" ");
-  if (/Administrator/i.test(joined)) {
-    return { role: "administrator", courseRole: "instructor" };
-  }
-  if (/Instructor|Faculty|Staff/i.test(joined)) {
-    return { role: "instructor", courseRole: "instructor" };
-  }
-  if (/TeachingAssistant|Teaching Assistant|TA/i.test(joined)) {
-    return { role: "instructor", courseRole: "ta" };
-  }
-  if (/Observer|Mentor/i.test(joined)) {
-    return { role: "learner", courseRole: "observer" };
-  }
-  if (/Learner|Student|Member/i.test(joined)) {
-    return { role: "learner", courseRole: "learner" };
-  }
-  throw new CoreApiError(403, "Unsupported LTI role");
-}
-
 function parseTargetKind(value: string | undefined): LtiSession["targetKind"] | undefined {
   if (
     value === "lesson" ||
     value === "card" ||
     value === "quiz_set" ||
     value === "chat" ||
-    value === "video"
+    value === "video" ||
+    value === "micro_content"
   ) {
     return value;
   }
@@ -126,111 +120,6 @@ function shouldUseQuerySessionFallback(sameSite: CookieSameSite, secure: boolean
     process.env.LTI_SESSION_QUERY_FALLBACK === "true" ||
     (process.env.NODE_ENV !== "production" && (!secure || sameSite !== "none"))
   );
-}
-
-function isWeakRsaKeyError(error: unknown): boolean {
-  return errorMessage(error).includes("modulusLength to be 2048 bits or larger");
-}
-
-function allowWeakRsaVerification(): boolean {
-  return (
-    process.env.NODE_ENV !== "production" ||
-    process.env.LTI_ALLOW_WEAK_RSA_VERIFICATION === "true"
-  );
-}
-
-function assertPlatformClaims(payload: JWTPayload): void {
-  if (payload.iss !== LTI_CONFIG.issuer) {
-    throw new Error(`Unexpected LTI issuer: ${String(payload.iss || "")}`);
-  }
-
-  const audiences = Array.isArray(payload.aud)
-    ? payload.aud.map(String)
-    : typeof payload.aud === "string"
-      ? [payload.aud]
-      : [];
-  if (!audiences.includes(LTI_CONFIG.clientId)) {
-    throw new Error("Unexpected LTI audience");
-  }
-
-  const now = Math.floor(Date.now() / 1000);
-  if (payload.exp !== undefined && now >= Number(payload.exp)) {
-    throw new Error("LTI id_token is expired");
-  }
-  if (payload.nbf !== undefined && now < Number(payload.nbf)) {
-    throw new Error("LTI id_token is not active yet");
-  }
-}
-
-async function fetchPlatformJwks(): Promise<Jwks> {
-  const response = await fetch(LTI_CONFIG.jwksUrl, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch platform JWKS: HTTP ${response.status}`);
-  }
-  const jwks = (await response.json()) as Jwks;
-  if (!Array.isArray(jwks.keys)) {
-    throw new Error("Platform JWKS is missing keys");
-  }
-  return jwks;
-}
-
-async function verifyWeakRsaPlatformJwt(idToken: string): Promise<JWTPayload> {
-  const header = decodeProtectedHeader(idToken);
-  if (header.alg !== "RS256") {
-    throw new Error(`Unsupported LTI id_token alg: ${String(header.alg || "")}`);
-  }
-
-  const jwks = await fetchPlatformJwks();
-  const jwk = jwks.keys?.find(
-    (key) =>
-      key.kty === "RSA" &&
-      key.n &&
-      key.e &&
-      (!header.kid || key.kid === header.kid)
-  );
-  if (!jwk) {
-    throw new Error("No matching RSA key found in platform JWKS");
-  }
-
-  const parts = idToken.split(".");
-  if (parts.length !== 3) {
-    throw new Error("Invalid LTI id_token format");
-  }
-
-  const verifier = createVerify("RSA-SHA256");
-  verifier.update(`${parts[0]}.${parts[1]}`);
-  verifier.end();
-
-  const publicKey = createPublicKey({ key: jwk, format: "jwk" });
-  const valid = verifier.verify(publicKey, Buffer.from(parts[2], "base64url"));
-  if (!valid) {
-    throw new Error("Invalid LTI id_token signature");
-  }
-
-  const payload = decodeJwt(idToken);
-  assertPlatformClaims(payload);
-  return payload;
-}
-
-async function verifyPlatformJwt(idToken: string): Promise<JWTPayload> {
-  const platformJwks = createRemoteJWKSet(new URL(LTI_CONFIG.jwksUrl));
-
-  try {
-    const { payload } = await jwtVerify(idToken, platformJwks, {
-      issuer: LTI_CONFIG.issuer,
-      audience: LTI_CONFIG.clientId,
-    });
-    return payload;
-  } catch (error: unknown) {
-    if (!isWeakRsaKeyError(error) || !allowWeakRsaVerification()) {
-      throw error;
-    }
-
-    console.warn(
-      "[lti/launch] platform JWKS uses a weak RSA key; using development-only verifier"
-    );
-    return verifyWeakRsaPlatformJwt(idToken);
-  }
 }
 
 /**
@@ -315,15 +204,13 @@ export async function POST(request: NextRequest) {
 
 
     const deploymentId = payload[DEPLOYMENT_CLAIM];
-    if (
-      LTI_CONFIG.deploymentId &&
-      String(deploymentId || "") !== LTI_CONFIG.deploymentId
-    ) {
+    if (!isKnownDeployment(String(deploymentId || ""))) {
       throw new Error("Invalid LTI deployment_id");
     }
 
     const tokenCustom = parseCustomClaim(payload[CUSTOM_CLAIM]);
-    const custom = { ...tokenCustom, ...xblockCustom };
+    // Canvas resource targets must come from signed claims, never login query params.
+    const custom = LTI_CONFIG.lmsType === "canvas" ? tokenCustom : { ...xblockCustom, ...tokenCustom };
     const loIds = custom.lo_ids ? custom.lo_ids.split(",").filter(Boolean) : [];
     const chatbotEnabled = custom.chatbot_enabled !== "false";
 
@@ -333,6 +220,26 @@ export async function POST(request: NextRequest) {
     const displayName = (payload.name || null) as string | null;
     const roles = parseRoles(payload[ROLES_CLAIM]);
     const mappedRole = mapRoles(roles);
+    const messageType = payload[`${LTI_CLAIM}message_type`];
+    // Hai kiểu sau thuộc Asset Processor (chấm bài luận nộp file): giảng viên
+    // bấm "Modify" bộ chấm, hoặc ai đó bấm "View report" trong SpeedGrader.
+    const isProcessorSettings = messageType === "LtiAssetProcessorSettingsRequest";
+    const isReportReview = messageType === "LtiReportReviewRequest";
+    if (
+      messageType !== "LtiResourceLinkRequest" &&
+      messageType !== "LtiDeepLinkingRequest" &&
+      !isProcessorSettings &&
+      !isReportReview
+    )
+      throw new Error("Unsupported LTI message type");
+    if (payload[`${LTI_CLAIM}version`] !== "1.3.0") throw new Error("Unsupported LTI version");
+    const isDeepLink = messageType === "LtiDeepLinkingRequest";
+    if ((isDeepLink || isProcessorSettings) && !["instructor", "ta"].includes(mappedRole.courseRole)) throw new CoreApiError(403, "Chỉ giảng viên được thêm quiz vào Canvas.");
+    const processorLinking =
+      isDeepLink && acceptsAssetProcessor(payload)
+        ? assetProcessorSettings(payload, LTI_CONFIG.platformUrl)
+        : null;
+    const linking = isDeepLink && !processorLinking ? deepLinkSettings(payload, LTI_CONFIG.platformUrl) : null;
 
     // Context (course) info — from id_token or from XBlock fallback
     const context = (payload[CONTEXT_CLAIM] || {}) as Record<string, unknown>;
@@ -347,25 +254,80 @@ export async function POST(request: NextRequest) {
     const resourceLink = (payload[RESOURCE_LINK_CLAIM] || {}) as Record<string, unknown>;
     const resourceLinkId =
       typeof resourceLink.id === "string" ? resourceLink.id : custom.resource_link_id;
-    const targetKind = parseTargetKind(custom.target_kind);
-    const targetId = custom.target_id || custom.lesson_id || undefined;
+    // SpeedGrader mở bài nộp basic_lti_launch bằng URL trong điểm AGS; URL đó
+    // đi trong target_link_uri đã ký và chỉ giảng viên/trợ giảng được xem.
+    const submissionView =
+      messageType === "LtiResourceLinkRequest"
+        ? parseSubmissionViewUri(
+            payload[TARGET_LINK_URI_CLAIM],
+            new URL(LTI_CONFIG.redirectUri).origin,
+          )
+        : null;
+    if (submissionView && !canViewSubmissions(mappedRole.role, mappedRole.courseRole)) {
+      return new Response(
+        '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+          '<body style="font:14px system-ui,sans-serif;margin:0;padding:24px;color:#334155">' +
+          "<p>Trang này là bài làm của sinh viên, chỉ giảng viên và trợ giảng của khóa học xem được.</p>" +
+          "<p>Để làm hoặc xem lại bài, hãy mở bài tập từ trang Assignment trong Canvas.</p></body>",
+        { status: 403, headers: { "Content-Type": "text/html; charset=utf-8" } }
+      );
+    }
+    const targetKind = submissionView
+      ? "quiz_set"
+      : isDeepLink
+        ? undefined
+        : parseTargetKind(custom.target_kind);
+    const targetId = submissionView
+      ? submissionView.quizSetId
+      : isDeepLink
+        ? null
+        : custom.target_id || custom.lesson_id || null;
+
+    // Nút chat ở thanh trên của Canvas (placement top_navigation) hiện ở mọi trang,
+    // kể cả dashboard hay trang tài khoản không thuộc khóa học nào. Chat theo khóa
+    // học, nên không có context thì báo rõ thay vì trả JSON lỗi trong ngăn bên.
+    if (targetKind === "chat" && !lmsContextId) {
+      return new Response(
+        '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+          '<body style="font:14px system-ui,sans-serif;margin:0;padding:24px;color:#334155">' +
+          "<p>Trợ giảng AI trả lời dựa trên tài liệu của từng khóa học, nên chỉ dùng được khi đang ở trong một khóa học.</p>" +
+          "<p>Hãy mở một khóa học trong Canvas rồi bấm lại nút Trợ giảng AI.</p></body>",
+        { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } }
+      );
+    }
 
     const ags = (payload[AGS_CLAIM] || {}) as Record<string, unknown>;
     const agsLineItemUrl = typeof ags.lineitem === "string" ? ags.lineitem : undefined;
 
+    // Claim NRPS chỉ có khi tool đã có scope contextmembership.readonly và launch
+    // diễn ra sau khi scope được thêm; core-api lưu URL để đọc danh sách lớp.
+    const nrpsClaim = (payload[NRPS_CLAIM] || {}) as Record<string, unknown>;
+    const nrps =
+      typeof nrpsClaim.context_memberships_url === "string" && nrpsClaim.context_memberships_url
+        ? {
+            contextMembershipsUrl: nrpsClaim.context_memberships_url,
+            serviceVersions: Array.isArray(nrpsClaim.service_versions)
+              ? nrpsClaim.service_versions.map(String)
+              : undefined,
+          }
+        : undefined;
+
     // ── Sync with core-api ──
-    const sync = await coreApi.launchSync({
+    const sync = await coreApi.launchSync<LaunchSyncResponse>({
       lmsType: LTI_CONFIG.lmsType,
       lmsSub,
-      email: email ?? undefined,
-      displayName: displayName ?? undefined,
+      email,
+      displayName,
       role: mappedRole.role,
       courseRole: mappedRole.courseRole,
       lmsContextId,
       contextTitle,
-      resourceLinkId,
-      targetKind,
-      targetId,
+      // Đường xem bài làm không phải một Assignment của sinh viên: không ghi
+      // resource link hay line item; core-api kiểm tra quiz thuộc khóa học khi
+      // trả bài làm.
+      resourceLinkId: submissionView ? undefined : resourceLinkId,
+      targetKind: submissionView ? undefined : targetKind,
+      targetId: submissionView ? undefined : targetId,
       customClaims: custom,
       agsLineItemUrl,
       agsScoreMaximum:
@@ -373,9 +335,13 @@ export async function POST(request: NextRequest) {
           ? Number(custom.ags_score_maximum)
           : undefined,
       agsLabel: typeof resourceLink.title === "string" ? resourceLink.title : contextTitle,
+      nrps,
     });
 
     // ── Set Redis session ──
+    // Phiên thi sống tối thiểu bằng thời gian làm + 10 phút; mọi phiên được gia
+    // hạn trượt mỗi request (readLtiSession).
+    const ttlSeconds = sessionTtlFor(sync.examTimeLimitMinutes);
     const session: LtiSession = {
       internalUserId: sync.internalUserId,
       lmsType: LTI_CONFIG.lmsType,
@@ -391,27 +357,57 @@ export async function POST(request: NextRequest) {
       resourceLinkId: sync.resourceLinkId,
       targetKind,
       targetId,
+      ...(submissionView ? { submissionId: submissionView.submissionId } : {}),
       loIds,
       chatbotEnabled,
+      ttlSeconds,
+      issuedAt: Math.floor(Date.now() / 1000),
     };
 
     const sid = randomUUID();
-    await redis.setex(
-      sessionKey(sid),
-      SESSION_TTL,
-      JSON.stringify(session)
-    );
+    const flowId = linking || processorLinking ? randomUUID() : undefined;
+    if (linking && flowId) {
+      const flow: DeepLinkState = { ...linking, userId: session.internalUserId, courseId: session.courseId, selectionId: randomUUID() };
+      await redis.setex(deepLinkKey(flowId), SESSION_TTL, JSON.stringify(flow));
+    }
+    if (processorLinking && flowId) {
+      const flow: AssetProcessorFlow = { ...processorLinking, userId: session.internalUserId, courseId: session.courseId };
+      await redis.setex(assetProcessorKey(flowId), SESSION_TTL, JSON.stringify(flow));
+    }
+    await redis.setex(sessionKey(sid), ttlSeconds, JSON.stringify(session));
 
     // ── Set session cookie ──
     const sameSite = ltiCookieSameSite();
     const secure = ltiCookieSecure(sameSite);
+    const submissionClaim = (payload[`${LTI_CLAIM}submission`] || {}) as { id?: unknown };
     const redirectPath =
-      mappedRole.courseRole === "instructor" || mappedRole.courseRole === "ta"
+      submissionView
+        ? submissionViewPath(submissionView.quizSetId, submissionView.submissionId)
+        : processorLinking
+        ? "/lti/asset-processor"
+        : isProcessorSettings
+          ? `/lti/asset-processor?processor=${encodeURIComponent(custom[PROCESSOR_CUSTOM_KEY] || "")}`
+          : isReportReview
+            ? `/lti/essay-report?submission=${encodeURIComponent(String(submissionClaim.id || ""))}`
+            : isDeepLink
+        ? "/lti/deep-link"
+        : targetKind === "chat"
+          ? // Mục "Trợ giảng AI" ở menu khóa học mở trang chat đầy đủ (custom chat_layout=page);
+            // nút ở thanh trên mở ngăn hẹp.
+            custom.chat_layout === "page"
+            ? `/learn/courses/${sync.internalCourseId}/chat`
+            : `/learn/courses/${sync.internalCourseId}/chat?embed=1`
+          : targetKind === "quiz_set" && targetId
+          ? `/learn/quizzes/${targetId}`
+          : targetKind === "micro_content" && targetId
+            ? `/learn/micro-content/${targetId}`
+          : mappedRole.courseRole === "instructor" || mappedRole.courseRole === "ta"
         ? "/manage/dashboard"
         : targetKind === "lesson" && targetId
           ? `/learn/lessons/${targetId}`
           : `/learn/courses/${sync.internalCourseId}`;
     const redirectUrl = publicToolUrl(redirectPath);
+    if (flowId) redirectUrl.searchParams.set("flow", flowId);
     if (shouldUseQuerySessionFallback(sameSite, secure)) {
       redirectUrl.searchParams.set("sid", sid);
     }
@@ -421,7 +417,9 @@ export async function POST(request: NextRequest) {
       httpOnly: true,
       secure,
       sameSite,
-      maxAge: SESSION_TTL,
+      // Cookie không gia hạn được lúc render, nên sống tới trần của phiên; Redis
+      // mới quyết định phiên còn hiệu lực (gia hạn trượt trong readLtiSession).
+      maxAge: SESSION_MAX_AGE,
       path: "/",
     });
 
@@ -437,7 +435,10 @@ export async function POST(request: NextRequest) {
     return response;
   } catch (err: unknown) {
     console.error("[lti/launch] error:", err instanceof CoreApiError ? err.body : errorMessage(err));
-    const status = err instanceof CoreApiError && err.status >= 500 ? 502 : 500;
+    const status =
+      err instanceof UnsupportedRoleError
+        ? 403
+        : coreApiErrorStatus(err, 400);
     return new Response(
       JSON.stringify({ error: "LTI launch failed", detail: errorMessage(err) }),
       { status, headers: { "Content-Type": "application/json" } }

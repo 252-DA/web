@@ -1,9 +1,11 @@
-type InstructorNavItem = "dashboard" | "documents" | "review" | "learner";
+type InstructorNavItem = "dashboard" | "curriculum" | "documents" | "quizzes" | "review" | "micro-content" | "media" | "mastery" | "learner" | "chat" | "models";
 
 type Props = {
   active: InstructorNavItem;
   courseId: string;
   sid?: string;
+  /** Admin của LMS thấy thêm trang chọn model AI (áp dụng cho mọi khoá học). */
+  isAdmin?: boolean;
 };
 
 function withSid(path: string, sid?: string) {
@@ -13,12 +15,19 @@ function withSid(path: string, sid?: string) {
   return `${url.pathname}?${url.searchParams.toString()}`;
 }
 
-export function InstructorNav({ active, courseId, sid }: Props) {
+export function InstructorNav({ active, courseId, sid, isAdmin }: Props) {
   const items = [
     { key: "dashboard", label: "Dashboard", href: "/manage/dashboard" },
+    { key: "curriculum", label: "Đề cương", href: "/manage/curriculum" },
     { key: "documents", label: "Documents", href: "/manage/documents" },
-    { key: "review", label: "Review drafts", href: "/manage/review" },
+    { key: "micro-content", label: "Micro Content", href: "/manage/micro-content" },
+    { key: "media", label: "Kho Video", href: "/manage/media" },
+    { key: "quizzes", label: "Soạn đề", href: "/manage/quizzes/new" },
+    { key: "review", label: "Quiz & Review", href: "/manage/review" },
+    { key: "mastery", label: "Mức nắm LO", href: "/manage/mastery" },
     { key: "learner", label: "Learner preview", href: `/learn/courses/${courseId}` },
+    { key: "chat", label: "Trợ giảng AI", href: "/manage/chat" },
+    ...(isAdmin ? [{ key: "models", label: "Model AI", href: "/manage/models" }] : []),
   ] as const;
 
   return (

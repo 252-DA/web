@@ -5,6 +5,7 @@ import { FormEvent, useState } from "react";
 type Props = {
   courseId: string;
   sid?: string;
+  initialMessage?: string;
 };
 
 function withSid(path: string, sid?: string) {
@@ -16,8 +17,13 @@ function withSid(path: string, sid?: string) {
   return `${url.pathname}?${url.searchParams.toString()}`;
 }
 
-export function UploadForm({ courseId, sid }: Props) {
-  const [message, setMessage] = useState("");
+async function responseError(response: Response) {
+  const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+  return payload?.error || `Upload failed: HTTP ${response.status}`;
+}
+
+export function UploadForm({ courseId, sid, initialMessage }: Props) {
+  const [message, setMessage] = useState(initialMessage || "");
   const [busy, setBusy] = useState(false);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -30,43 +36,19 @@ export function UploadForm({ courseId, sid }: Props) {
     }
 
     setBusy(true);
-    setMessage("Đang tạo upload session...");
+    setMessage("Đang upload và đưa tài liệu vào hàng đợi...");
     try {
-      const sessionResponse = await fetch(withSid("/api/documents/upload-session", sid), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          courseId,
-          title: String(form.get("title") || file.name),
-          fileName: file.name,
-          mimeType: file.type || "application/octet-stream",
-        }),
-      });
-      if (!sessionResponse.ok) {
-        throw new Error(await sessionResponse.text());
-      }
-      const uploadSession = (await sessionResponse.json()) as {
-        document_id: string;
-        upload_url: string;
-      };
+      const payload = new FormData();
+      payload.set("courseId", courseId);
+      payload.set("title", String(form.get("title") || file.name));
+      payload.set("file", file);
 
-      setMessage("Đang đưa file lên object storage...");
-      const uploadResponse = await fetch(uploadSession.upload_url, {
-        method: "PUT",
-        body: file,
-        headers: { "Content-Type": file.type || "application/octet-stream" },
+      const uploadResponse = await fetch(withSid("/api/documents/upload", sid), {
+        method: "POST",
+        body: payload,
       });
       if (!uploadResponse.ok) {
-        throw new Error(`Upload failed: HTTP ${uploadResponse.status}`);
-      }
-
-      setMessage("Đang xác nhận để chạy pipeline...");
-      const confirmResponse = await fetch(
-        withSid(`/api/documents/${uploadSession.document_id}/confirm-upload`, sid),
-        { method: "POST" },
-      );
-      if (!confirmResponse.ok) {
-        throw new Error(await confirmResponse.text());
+        throw new Error(await responseError(uploadResponse));
       }
 
       setMessage("Đã enqueue xử lý tài liệu.");
@@ -79,7 +61,14 @@ export function UploadForm({ courseId, sid }: Props) {
   }
 
   return (
-    <form onSubmit={submit} className="grid gap-3 border-b border-slate-200 p-4 md:grid-cols-[1fr_1fr_auto]">
+    <form
+      action={withSid("/api/documents/upload", sid)}
+      method="post"
+      encType="multipart/form-data"
+      onSubmit={submit}
+      className="grid gap-3 border-b border-slate-200 p-4 md:grid-cols-[1fr_1fr_auto]"
+    >
+      <input type="hidden" name="courseId" value={courseId} />
       <input
         name="title"
         placeholder="Tên tài liệu"
@@ -88,7 +77,7 @@ export function UploadForm({ courseId, sid }: Props) {
       <input
         name="file"
         type="file"
-        accept=".pdf,.doc,.docx,.ppt,.pptx,text/plain,application/pdf"
+        accept=".pdf,.doc,.docx,.ppt,.pptx,.md,.markdown,application/pdf,text/markdown"
         className="h-10 rounded border border-slate-300 px-3 py-2 text-sm"
       />
       <button

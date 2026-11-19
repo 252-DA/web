@@ -1,0 +1,343 @@
+import assert from "node:assert/strict";
+import { readFile, mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import ts from "typescript";
+import { generateKeyPair, exportPKCS8, jwtVerify } from "jose";
+
+const dir = await mkdtemp(join(tmpdir(), "da-lti-test-"));
+const asModule = (source) =>
+  `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
+const compile = async (path) =>
+  ts.transpileModule(await readFile(new URL(path, import.meta.url), "utf8"), {
+    compilerOptions: {
+      module: ts.ModuleKind.ES2022,
+      target: ts.ScriptTarget.ES2022,
+    },
+  }).outputText;
+try {
+  const { privateKey, publicKey } = await generateKeyPair("RS256", {
+    extractable: true,
+  });
+  const path = join(dir, "private.pem");
+  await writeFile(path, await exportPKCS8(privateKey), { mode: 0o600 });
+  Object.assign(process.env, {
+    LTI_LMS_TYPE: "canvas",
+    LTI_PLATFORM_URL: "https://canvas.test",
+    LTI_ISSUER_URL: "https://canvas.instructure.com",
+    LTI_CLIENT_ID: "client-123",
+    LTI_PRIVATE_KEY_PATH: path,
+    LTI_REDIRECT_URI: "https://tool.test/lti/launch",
+  });
+  const config = asModule(await compile("../src/lib/lti.ts"));
+  const code = (await compile("../src/lib/lti-deep-link.ts"))
+    .replace('"./lti"', JSON.stringify(config))
+    .replace('"jose"', JSON.stringify(import.meta.resolve("jose")));
+  const {
+    deepLinkSettings,
+    signDeepLinkResponse,
+    signDeepLinkMicroContentResponse,
+    deepLinkForm,
+    LTI_CLAIM,
+    DL_CLAIM,
+  } = await import(asModule(code));
+  const opaque = `${Buffer.from('{"alg":"HS256"}').toString("base64url")}.${Buffer.from('{"context_module_id":17,"placement":"module_menu_modal"}').toString("base64url")}.opaque`;
+  const returnUrl = `https://canvas.test/courses/3/deep_linking_response?data=${opaque}`;
+  const payload = {
+    [`${LTI_CLAIM}deployment_id`]: "deployment-1",
+    [`${DL_CLAIM}deep_linking_settings`]: {
+      accept_types: ["ltiResourceLink"],
+      deep_link_return_url: returnUrl,
+      data: "opaque-data-123",
+    },
+  };
+  const settings = deepLinkSettings(payload, "https://canvas.test");
+  assert.equal(settings.moduleId, "17");
+  assert.equal(settings.returnUrl, returnUrl);
+  // Custom claim canvas_module_id: thắng ?data=JWT khi là id số...
+  const withCustom = (custom, overrides = {}) => ({
+    ...payload,
+    [`${LTI_CLAIM}custom`]: custom,
+    [`${DL_CLAIM}deep_linking_settings`]: {
+      ...payload[`${DL_CLAIM}deep_linking_settings`],
+      ...overrides,
+    },
+  });
+  assert.equal(
+    deepLinkSettings(withCustom({ canvas_module_id: "23" }), "https://canvas.test").moduleId,
+    "23",
+  );
+  // ...và dùng được cả khi return URL không mang module nào.
+  assert.equal(
+    deepLinkSettings(
+      withCustom(
+        { canvas_module_id: "23" },
+        { deep_link_return_url: "https://canvas.test/courses/3/deep_linking_response" },
+      ),
+      "https://canvas.test",
+    ).moduleId,
+    "23",
+  );
+  // Biến chưa mở rộng (Deep Linking từ module_menu_modal) thì lùi về ?data=JWT.
+  for (const unexpanded of ["$Canvas.module.id", "", "abc", "0", undefined]) {
+    assert.equal(
+      deepLinkSettings(withCustom({ canvas_module_id: unexpanded }), "https://canvas.test").moduleId,
+      "17",
+    );
+  }
+  assert.equal(
+    deepLinkSettings(withCustom(undefined), "https://canvas.test").moduleId,
+    "17",
+  );
+  const malformed = (overrides) => ({
+    ...payload,
+    [`${DL_CLAIM}deep_linking_settings`]: {
+      ...payload[`${DL_CLAIM}deep_linking_settings`],
+      ...overrides,
+    },
+  });
+  assert.throws(
+    () =>
+      deepLinkSettings(
+        malformed({ deep_link_return_url: "https://evil.test/return" }),
+        "https://canvas.test",
+      ),
+    /không thuộc/,
+  );
+  assert.throws(
+    () =>
+      deepLinkSettings(
+        malformed({ accept_types: ["file"] }),
+        "https://canvas.test",
+      ),
+    /không chấp nhận/,
+  );
+  assert.throws(
+    () =>
+      deepLinkSettings(
+        malformed({ deep_link_return_url: "https://canvas.test/return" }),
+        "https://canvas.test",
+      ),
+    /module/,
+  );
+  // Mở từ trang Assignments: Canvas không gắn module. Chấp nhận khi placement
+  // (trong ?data=JWT đã ký) hoặc canvas_assignment_id cho thấy đúng là trang đó.
+  const unsignedData = (claims) =>
+    `${Buffer.from('{"alg":"HS256"}').toString("base64url")}.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.opaque`;
+  const assignmentsReturn = (claims) =>
+    `https://canvas.test/courses/3/deep_linking_response?data=${unsignedData(claims)}`;
+  const noModule = deepLinkSettings(
+    malformed({
+      deep_link_return_url: assignmentsReturn({ placement: "course_assignments_menu" }),
+    }),
+    "https://canvas.test",
+  );
+  assert.equal(noModule.moduleId, undefined);
+  assert.ok(!("moduleId" in noModule), "moduleId vắng hẳn, không phải chuỗi 'undefined'");
+  assert.equal(noModule.deploymentId, "deployment-1");
+  assert.equal(
+    deepLinkSettings(
+      malformed({
+        deep_link_return_url: assignmentsReturn({ placement: "assignment_selection" }),
+      }),
+      "https://canvas.test",
+    ).moduleId,
+    undefined,
+  );
+  assert.equal(
+    deepLinkSettings(
+      withCustom(
+        { canvas_assignment_id: "42" },
+        { deep_link_return_url: "https://canvas.test/courses/3/deep_linking_response" },
+      ),
+      "https://canvas.test",
+    ).moduleId,
+    undefined,
+  );
+  // Có cả module lẫn placement Assignment thì vẫn lấy module.
+  assert.equal(
+    deepLinkSettings(
+      malformed({
+        deep_link_return_url: assignmentsReturn({
+          placement: "course_assignments_menu",
+          context_module_id: 31,
+        }),
+      }),
+      "https://canvas.test",
+    ).moduleId,
+    "31",
+  );
+  // Không có module và không đến từ trang Assignment thì vẫn là mở nhầm chỗ.
+  for (const [label, returnUrl, custom] of [
+    ["placement khác", assignmentsReturn({ placement: "module_index_menu_modal" }), undefined],
+    ["không placement", assignmentsReturn({}), undefined],
+    ["biến chưa mở rộng", "https://canvas.test/courses/3/deep_linking_response", { canvas_assignment_id: "$Canvas.assignment.id" }],
+    ["id không phải số", "https://canvas.test/courses/3/deep_linking_response", { canvas_assignment_id: "0" }],
+  ]) {
+    assert.throws(
+      () =>
+        deepLinkSettings(
+          withCustom(custom, { deep_link_return_url: returnUrl }),
+          "https://canvas.test",
+        ),
+      /module/,
+      label,
+    );
+  }
+  const state = {
+    ...settings,
+    userId: "user",
+    courseId: "course",
+    selectionId: "selection",
+  };
+  const token = await signDeepLinkResponse(state, {
+    quiz_set_id: "set-123",
+    title: "Quiz chương 1",
+  });
+  const { payload: response } = await jwtVerify(token, publicKey, {
+    issuer: "client-123",
+    audience: "https://canvas.instructure.com",
+  });
+  assert.equal(response[`${LTI_CLAIM}message_type`], "LtiDeepLinkingResponse");
+  assert.equal(response[`${LTI_CLAIM}deployment_id`], "deployment-1");
+  assert.equal(response[`${DL_CLAIM}data`], "opaque-data-123");
+  const item = response[`${DL_CLAIM}content_items`][0];
+  assert.equal(item.type, "ltiResourceLink");
+  assert.equal(item.custom.target_kind, "quiz_set");
+  assert.equal(item.custom.target_id, "set-123");
+  assert.equal(item.lineItem.scoreMaximum, 100);
+  assert.equal(item.url, "https://tool.test/learn/quizzes/set-123");
+  assert.equal(item.custom.ags_score_maximum, "100");
+  assert.equal(item.submission, undefined);
+  const { payload: examResponse } = await jwtVerify(
+    await signDeepLinkResponse(state, {
+      quiz_set_id: "exam-1",
+      title: "Kiểm tra chương 1",
+      questionCount: 10,
+      settings: {
+        mode: "exam",
+        pointsPossible: 10,
+        maxAttempts: 1,
+        timeLimitMinutes: 30,
+        availableFrom: "2026-10-01T01:00:00.000Z",
+        availableUntil: "2026-10-01T03:00:00.000Z",
+        dueAt: "2026-10-01T02:30:00.000Z",
+      },
+    }),
+    publicKey,
+  );
+  const exam = examResponse[`${DL_CLAIM}content_items`][0];
+  // Canvas: lineItem.scoreMaximum → points, available → unlock/lock, submission.endDateTime → due.
+  assert.equal(exam.lineItem.scoreMaximum, 10);
+  assert.equal(exam.custom.ags_score_maximum, "10");
+  assert.deepEqual(exam.available, {
+    startDateTime: "2026-10-01T01:00:00.000Z",
+    endDateTime: "2026-10-01T03:00:00.000Z",
+  });
+  assert.deepEqual(exam.submission, { endDateTime: "2026-10-01T02:30:00.000Z" });
+  assert.match(exam.text, /Bài kiểm tra DA · 10 câu · 30 phút · 1 lần làm/);
+  const { payload: cancel } = await jwtVerify(
+    await signDeepLinkResponse(state),
+    publicKey,
+  );
+  assert.deepEqual(cancel[`${DL_CLAIM}content_items`], []);
+  const form = deepLinkForm(returnUrl + '&label="<script>"', token);
+  assert.equal(form.headers.get("cache-control"), "no-store");
+  const html = await form.text();
+  assert.ok(html.includes('name="JWT"'));
+  assert.ok(!html.includes('&label="<script>"'));
+
+  // ── Asset Processor (Document Processor): gắn bộ chấm bài luận ──
+  const processorCode = (await compile("../src/lib/lti-asset-processor.ts"))
+    .replace('"./lti"', JSON.stringify(config))
+    .replace('"./lti-deep-link"', JSON.stringify(asModule(code)));
+  const {
+    acceptsAssetProcessor,
+    assetProcessorSettings,
+    signAssetProcessorResponse,
+    noticeHandlerUrl,
+  } = await import(asModule(processorCode));
+  const pnsClaim = `${LTI_CLAIM}platformnotificationservice`;
+  const processorPayload = {
+    [`${LTI_CLAIM}deployment_id`]: "deployment-1",
+    [`${LTI_CLAIM}activity`]: { id: "activity-uuid", title: "Tiểu luận" },
+    [pnsClaim]: {
+      platform_notification_service_url: "https://canvas.test/api/lti/notice-handlers/9",
+      notice_types_supported: ["LtiAssetProcessorSubmissionNotice"],
+    },
+    [`${DL_CLAIM}deep_linking_settings`]: {
+      accept_types: ["ltiAssetProcessor"],
+      deep_link_return_url: "https://canvas.test/courses/3/deep_linking_response",
+    },
+  };
+  assert.equal(acceptsAssetProcessor(processorPayload), true);
+  assert.equal(acceptsAssetProcessor(payload), false);
+  const processorSettings = assetProcessorSettings(processorPayload, "https://canvas.test");
+  assert.equal(processorSettings.pnsUrl, "https://canvas.test/api/lti/notice-handlers/9");
+  assert.equal(processorSettings.activityId, "activity-uuid");
+  assert.equal(processorSettings.activityTitle, "Tiểu luận");
+  assert.throws(
+    () =>
+      assetProcessorSettings(
+        { ...processorPayload, [pnsClaim]: { platform_notification_service_url: "https://evil.test/pns" } },
+        "https://canvas.test",
+      ),
+    /noticehandlers/,
+  );
+  assert.throws(
+    () => assetProcessorSettings({ ...processorPayload, [pnsClaim]: undefined }, "https://canvas.test"),
+    /noticehandlers/,
+  );
+  assert.throws(
+    () =>
+      assetProcessorSettings(
+        {
+          ...processorPayload,
+          [pnsClaim]: { ...processorPayload[pnsClaim], notice_types_supported: ["LtiHelloWorldNotice"] },
+        },
+        "https://canvas.test",
+      ),
+    /không gửi thông báo bài nộp/,
+  );
+  assert.equal(noticeHandlerUrl(), "https://tool.test/api/lti/notices");
+  const { payload: processorResponse } = await jwtVerify(
+    await signAssetProcessorResponse(
+      { ...processorSettings, userId: "user", courseId: "course" },
+      { processor_id: "proc-1", title: "Chấm tiểu luận", max_score: 10, rubric: [{}, {}, {}] },
+    ),
+    publicKey,
+    { issuer: "client-123", audience: "https://canvas.instructure.com" },
+  );
+  const processorItem = processorResponse[`${DL_CLAIM}content_items`][0];
+  assert.equal(processorItem.type, "ltiAssetProcessor");
+  assert.equal(processorItem.custom.da_processor_id, "proc-1");
+  assert.equal(processorItem.report.url, "https://tool.test/lti/essay-report");
+  assert.match(processorItem.text, /3 tiêu chí, tối đa 10 điểm/);
+  assert.ok(processorItem.text.length <= 255);
+
+  const { payload: microResponse } = await jwtVerify(
+    await signDeepLinkMicroContentResponse(state, {
+      micro_content_id: "mc-1",
+      title: "Spark RDD cơ bản",
+      questionCount: 3,
+    }),
+    publicKey,
+    { issuer: "client-123", audience: "https://canvas.instructure.com" },
+  );
+  const microItem = microResponse[`${DL_CLAIM}content_items`][0];
+  assert.equal(microItem.type, "ltiResourceLink");
+  assert.equal(microItem.url, "https://tool.test/learn/micro-content/mc-1");
+  assert.equal(microItem.title, "Spark RDD cơ bản");
+  assert.equal(microItem.lineItem, undefined);
+  assert.deepEqual(microItem.custom, {
+    target_kind: "micro_content",
+    target_id: "mc-1",
+  });
+  assert.match(microItem.text, /Micro Content: Video bài giảng & câu hỏi củng cố \(3 câu\)/);
+
+  console.log(
+    "PASS: module context, return-origin validation, signed response, grade item, exam dates/points, cancellation, safe form, micro-content link, asset processor settings/PNS/content item",
+  );
+} finally {
+  await rm(dir, { recursive: true, force: true });
+}

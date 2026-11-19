@@ -1,0 +1,176 @@
+import { readLtiSession } from "@/lib/session";
+import { coreApi, claimsFromSession } from "@/lib/core-api";
+import {
+  GRADE_SYNC,
+  type LearnerQuizResults,
+  type QuizSetSettings,
+  type StaffQuizResults,
+} from "@/lib/canvas-quiz";
+import { QuizForm } from "../../lessons/[id]/quiz/quiz-form";
+import { ExamPanel } from "./exam-panel";
+import { ExamReview } from "./exam-review";
+import { QuizReport } from "./quiz-report";
+
+type QuizSet = {
+  quiz_set_id: string;
+  title: string;
+  settings: QuizSetSettings;
+  questionCount: number;
+  items: Array<{
+    quiz_id: string;
+    question: string;
+    type: string;
+    options: unknown;
+  }>;
+};
+
+const time = new Intl.DateTimeFormat("vi-VN", {
+  dateStyle: "short",
+  timeStyle: "short",
+  timeZone: "Asia/Ho_Chi_Minh",
+});
+
+function errorPage(error: unknown) {
+  return (
+    <main className="p-8">
+      {error instanceof Error ? error.message : "Không tải được quiz."}
+    </main>
+  );
+}
+
+export default async function CanvasQuizPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const [{ id }, sp] = await Promise.all([params, searchParams]);
+  const active = await readLtiSession(sp.sid);
+  if (
+    !active ||
+    active.session.targetKind !== "quiz_set" ||
+    active.session.targetId !== id
+  )
+    return (
+      <main className="p-8">Mở quiz từ bài tập trong Canvas để bắt đầu.</main>
+    );
+  const claims = claimsFromSession(active.session);
+
+  // Giảng viên mở bài tập từ Canvas: xem đáp án, kết quả và trạng thái điểm.
+  if (active.session.courseRole !== "learner") {
+    let report: StaffQuizResults;
+    try {
+      report = await coreApi.quizSetResults<StaffQuizResults>(
+        id,
+        claims,
+        active.session.resourceLinkId,
+      );
+    } catch (error) {
+      return errorPage(error);
+    }
+    return <QuizReport report={report} />;
+  }
+
+  let quiz: QuizSet;
+  let history: LearnerQuizResults | null;
+  try {
+    [quiz, history] = await Promise.all([
+      coreApi.getQuizSet<QuizSet>(id, claims, active.session.resourceLinkId),
+      // Lịch sử chỉ để tham khảo — lỗi ở đây không được chặn việc làm bài.
+      coreApi
+        .quizSetResults<LearnerQuizResults>(id, claims, active.session.resourceLinkId)
+        .catch(() => null),
+    ]);
+  } catch (error) {
+    return errorPage(error);
+  }
+  const attempts = history?.attempts ?? [];
+  if (quiz.settings.mode === "exam")
+    return (
+      <main className="min-h-screen bg-slate-50 p-5 text-slate-950">
+        <div className="mx-auto max-w-3xl space-y-5">
+          <header>
+            <p className="text-sm text-slate-500">DA Platform · Bài kiểm tra</p>
+            <h1 className="mt-1 text-2xl font-semibold">{quiz.title}</h1>
+            {history?.bestScore !== null && history?.bestScore !== undefined && (
+              <p className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+                Điểm cao nhất:{" "}
+                <strong className="tabular-nums">
+                  {Math.round(history.bestScore * quiz.settings.pointsPossible) / 100}/
+                  {quiz.settings.pointsPossible}
+                </strong>
+                {history.sync && (
+                  <span className={`rounded px-2 py-0.5 text-xs font-medium ${GRADE_SYNC[history.sync].tone}`}>
+                    {GRADE_SYNC[history.sync].label}
+                  </span>
+                )}
+              </p>
+            )}
+          </header>
+          <ExamPanel
+            quizSetId={quiz.quiz_set_id}
+            resourceLinkId={active.session.resourceLinkId}
+            sid={active.sid}
+            questionCount={quiz.questionCount}
+            settings={quiz.settings}
+            state={history}
+          />
+          {history?.review && <ExamReview review={history.review} />}
+        </div>
+      </main>
+    );
+  return (
+    <main className="min-h-screen bg-slate-50 p-5 text-slate-950">
+      <div className="mx-auto max-w-3xl space-y-5">
+        <header>
+          <p className="text-sm text-slate-500">DA Platform · Quiz</p>
+          <h1 className="mt-1 text-2xl font-semibold">{quiz.title}</h1>
+          <p className="mt-2 text-sm text-slate-600">
+            {quiz.items.length} câu · Thang điểm 100 · Được làm lại, Canvas ghi
+            điểm cao nhất
+          </p>
+        </header>
+        {history && attempts.length > 0 && (
+          <section className="rounded-xl border border-slate-200 bg-white p-4 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p>
+                Bạn đã làm <strong>{attempts.length}</strong> lần · Điểm cao
+                nhất <strong className="tabular-nums">{history.bestScore}/100</strong>
+              </p>
+              {history.sync && (
+                <span
+                  className={`rounded px-2 py-0.5 text-xs font-medium ${GRADE_SYNC[history.sync].tone}`}
+                >
+                  {GRADE_SYNC[history.sync].label}
+                </span>
+              )}
+            </div>
+            <details className="mt-2 text-slate-600">
+              <summary className="cursor-pointer text-xs text-slate-500">
+                Các lượt đã nộp
+              </summary>
+              <ul className="mt-1 space-y-0.5">
+                {[...attempts].reverse().map((a, i) => (
+                  <li key={a.submissionId} className="flex gap-3 tabular-nums">
+                    <span className="w-14 text-slate-500">Lần {attempts.length - i}</span>
+                    <span className="w-16">{a.score}/100</span>
+                    <span className="text-slate-500">
+                      {time.format(new Date(a.attemptedAt))}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </section>
+        )}
+        <QuizForm
+          quizSetId={quiz.quiz_set_id}
+          quizItems={quiz.items}
+          resourceLinkId={active.session.resourceLinkId}
+          sid={active.sid}
+        />
+      </div>
+    </main>
+  );
+}

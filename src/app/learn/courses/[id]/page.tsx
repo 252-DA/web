@@ -7,6 +7,14 @@ interface Props {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
+type Course = { course_id: string; code: string; name: string; description: string | null };
+type Lesson = {
+  lesson_id: string;
+  title: string;
+  status: string;
+  learning_outcomes?: { code: string | null; statement: string };
+};
+
 function withSid(path: string, sid?: string) {
   if (!sid) return path;
   const url = new URL(path, "http://local");
@@ -24,8 +32,8 @@ export default async function CoursePage({ params, searchParams }: Props) {
   const { sid, session } = active;
   const claims = claimsFromSession(session);
   const [course, lessons] = await Promise.all([
-    coreApi.getCourse(id, claims),
-    coreApi.listLessons({ courseId: id, status: "PUBLISHED" }, claims),
+    coreApi.getCourse<Course>(id, claims),
+    coreApi.listLessons<Lesson[]>({ courseId: id, status: "PUBLISHED" }, claims),
   ]);
 
   return (
@@ -36,11 +44,25 @@ export default async function CoursePage({ params, searchParams }: Props) {
           <h1 className="text-2xl font-semibold">{course.name}</h1>
           {course.description && <p className="mt-2 text-sm text-slate-600">{course.description}</p>}
           {(session.courseRole === "instructor" || session.courseRole === "ta") && (
-            <InstructorNav active="learner" courseId={session.courseId} sid={sid} />
+            <InstructorNav active="learner" courseId={session.courseId} sid={sid} isAdmin={session.role === "administrator"} />
           )}
         </div>
       </header>
       <section className="mx-auto max-w-5xl px-4 py-6">
+        {session.chatbotEnabled && (
+          <a
+            href={withSid(`/learn/courses/${id}/chat`, sid)}
+            className="mb-4 block rounded border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-medium text-sky-900 hover:border-sky-400"
+          >
+            Trợ giảng AI: hỏi về tài liệu khóa học →
+          </a>
+        )}
+        <a
+          href={withSid(`/learn/courses/${id}/mastery`, sid)}
+          className="mb-4 block rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-900 hover:border-emerald-400"
+        >
+          Mức nắm của tôi: xem tiến độ theo từng chuẩn đầu ra →
+        </a>
         <div className="overflow-hidden rounded border border-slate-200 bg-white">
           <div className="border-b border-slate-200 p-4">
             <h2 className="font-semibold">Lessons đã publish</h2>
@@ -58,7 +80,7 @@ export default async function CoursePage({ params, searchParams }: Props) {
                   {lesson.learning_outcomes && (
                     <span className="mt-1 block text-sm text-slate-600">
                       {lesson.learning_outcomes.code ? `${lesson.learning_outcomes.code}: ` : ""}
-                      {lesson.learning_outcomes.statement_vi}
+                      {lesson.learning_outcomes.statement}
                     </span>
                   )}
                 </span>

@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { randomUUID } from "crypto";
-import { LTI_CONFIG } from "@/lib/lti";
+import { LTI_CONFIG, knownClientIds } from "@/lib/lti";
 import { redis } from "@/lib/redis";
 
 type LoginParams = {
@@ -10,6 +10,7 @@ type LoginParams = {
   ltiMessageHint: string | null;
   custom: string;
   courseId: string;
+  clientId: string | null;
 };
 
 function normalizeIssuer(value: string): string {
@@ -36,6 +37,7 @@ async function readLoginParams(request: NextRequest): Promise<LoginParams> {
     ltiMessageHint: params.get("lti_message_hint"),
     custom: params.get("custom") || "",
     courseId: params.get("course_id") || "",
+    clientId: params.get("client_id"),
   };
 }
 
@@ -49,7 +51,7 @@ async function readLoginParams(request: NextRequest): Promise<LoginParams> {
  * launch route sẽ đọc lại sau khi platform POST id_token.
  */
 async function handleLogin(request: NextRequest) {
-  const { iss, loginHint, targetLinkUri, ltiMessageHint, custom, courseId } =
+  const { iss, loginHint, targetLinkUri, ltiMessageHint, custom, courseId, clientId } =
     await readLoginParams(request);
 
   if (!iss || !loginHint || !targetLinkUri) {
@@ -84,7 +86,11 @@ async function handleLogin(request: NextRequest) {
   const oidcAuthUrl = new URL(LTI_CONFIG.authUrl);
   oidcAuthUrl.searchParams.set("response_type", "id_token");
   oidcAuthUrl.searchParams.set("response_mode", "form_post");
-  oidcAuthUrl.searchParams.set("client_id", LTI_CONFIG.clientId);
+  // Canvas gửi client_id của đăng ký đang launch; chỉ nhận đăng ký đã khai báo.
+  oidcAuthUrl.searchParams.set(
+    "client_id",
+    clientId && knownClientIds().includes(clientId) ? clientId : LTI_CONFIG.clientId,
+  );
   oidcAuthUrl.searchParams.set("redirect_uri", LTI_CONFIG.redirectUri);
   oidcAuthUrl.searchParams.set("scope", "openid");
   oidcAuthUrl.searchParams.set("prompt", "none");

@@ -1,0 +1,273 @@
+import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { decodeJwt, importPKCS8, SignJWT, type JWTPayload } from "jose";
+import { LTI_CONFIG } from "./lti";
+
+export const LTI_CLAIM = "https://purl.imsglobal.org/spec/lti/claim/";
+export const DL_CLAIM = "https://purl.imsglobal.org/spec/lti-dl/claim/";
+export type DeepLinkState = {
+  userId: string;
+  courseId: string;
+  deploymentId: string;
+  /** Vắng khi mở từ trang Assignment: bài tập tạo ngoài module nào. */
+  moduleId?: string;
+  returnUrl: string;
+  data?: string;
+  selectionId: string;
+};
+export const deepLinkKey = (id: string) => `lti:deep-link:${id}`;
+
+/**
+ * Placement mở từ trang Assignment: Canvas không gắn module nào vào launch.
+ * course_assignments_menu tạo thẳng Assignment từ content item có lineItem
+ * (Lti::IMS::Concerns::DeepLinkingModules); assignment_selection là hộp chọn
+ * công cụ ở trang sửa Assignment.
+ */
+const ASSIGNMENT_PLACEMENTS = new Set([
+  "course_assignments_menu",
+  "assignment_selection",
+]);
+
+/** Only call with a signature-, state- and nonce-verified platform payload. */
+export function deepLinkSettings(payload: JWTPayload, platformUrl: string) {
+  const raw = payload[`${DL_CLAIM}deep_linking_settings`];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw))
+    throw new Error("Thiếu cấu hình Deep Linking.");
+  const settings = raw as Record<string, unknown>;
+  if (
+    !Array.isArray(settings.accept_types) ||
+    !settings.accept_types.includes("ltiResourceLink")
+  )
+    throw new Error("Canvas không chấp nhận liên kết quiz.");
+  if (typeof settings.deep_link_return_url !== "string")
+    throw new Error("Thiếu địa chỉ trả về Canvas.");
+  const url = new URL(settings.deep_link_return_url);
+  const platform = new URL(platformUrl);
+  if (
+    url.origin !== platform.origin ||
+    url.username ||
+    url.password ||
+    url.hash ||
+    !/^https?:$/.test(url.protocol)
+  )
+    throw new Error("Địa chỉ trả về không thuộc Canvas đã cấu hình.");
+  if (settings.data !== undefined && typeof settings.data !== "string")
+    throw new Error("Deep Linking data không hợp lệ.");
+  // Custom field canvas_module_id=$Canvas.module.id (scripts/setup_canvas_lti.rb)
+  // do Canvas ký trong id_token. Canvas chỉ mở rộng nó khi launch từ một module
+  // item, không có ở launch Deep Linking của module_menu_modal (khi đó biến giữ
+  // nguyên chuỗi "$Canvas.module.id"), nên chỉ nhận khi là id số.
+  const custom = payload[`${LTI_CLAIM}custom`];
+  const claimed =
+    custom && typeof custom === "object" && !Array.isArray(custom)
+      ? (custom as Record<string, unknown>).canvas_module_id
+      : undefined;
+  // Canvas embeds its one-use module selection in ?data=JWT. The outer LTI
+  // signature authenticates this exact URL. Decode only to identify the module;
+  // return the original URL untouched so Canvas verifies its own opaque token.
+  const opaque = url.searchParams.get("data");
+  const opaqueClaims: JWTPayload = opaque ? decodeJwt(opaque) : {};
+  const moduleId = /^[1-9]\d*$/.test(String(claimed ?? ""))
+    ? claimed
+    : opaque
+      ? opaqueClaims.context_module_id
+      : url.searchParams.get("context_module_id");
+  const hasModule = /^[1-9]\d*$/.test(String(moduleId ?? ""));
+  // Không có module chỉ chấp nhận khi launch rõ ràng đến từ trang Assignment:
+  // placement của Canvas (trong ?data=JWT) hoặc biến canvas_assignment_id. Mọi
+  // trường hợp khác là mở nhầm chỗ nên vẫn báo lỗi như trước.
+  const placement =
+    typeof opaqueClaims.placement === "string"
+      ? opaqueClaims.placement
+      : (url.searchParams.get("placement") ?? "");
+  const customRecord =
+    custom && typeof custom === "object" && !Array.isArray(custom)
+      ? (custom as Record<string, unknown>)
+      : {};
+  const fromAssignment =
+    ASSIGNMENT_PLACEMENTS.has(placement) ||
+    /^[1-9]\d*$/.test(String(customRecord.canvas_assignment_id ?? ""));
+  if (!hasModule && !fromAssignment)
+    throw new Error(
+      "Hãy mở Sinh quiz bằng DA từ menu ⋮ của một module Canvas hoặc từ trang Assignments.",
+    );
+  const deploymentId = payload[`${LTI_CLAIM}deployment_id`];
+  if (typeof deploymentId !== "string" || !deploymentId)
+    throw new Error("Thiếu deployment Canvas.");
+  return {
+    returnUrl: settings.deep_link_return_url,
+    ...(hasModule ? { moduleId: String(moduleId) } : {}),
+    deploymentId,
+    ...(typeof settings.data === "string" ? { data: settings.data } : {}),
+  };
+}
+
+type LinkedQuiz = {
+  quiz_set_id: string;
+  title: string;
+  questionCount?: number;
+  settings?: {
+    mode: "practice" | "exam";
+    pointsPossible: number;
+    maxAttempts: number | null;
+    timeLimitMinutes: number | null;
+    availableFrom: string | null;
+    availableUntil: string | null;
+    dueAt: string | null;
+  };
+};
+
+/** Mô tả bài tập hiện trong Canvas, để sinh viên biết luật trước khi mở bài. */
+function describeQuiz(quiz: LinkedQuiz) {
+  const s = quiz.settings;
+  const parts = [s?.mode === "exam" ? "Bài kiểm tra DA" : "Bài luyện tập DA"];
+  if (quiz.questionCount) parts.push(`${quiz.questionCount} câu`);
+  if (s?.mode === "exam") {
+    if (s.timeLimitMinutes) parts.push(`${s.timeLimitMinutes} phút`);
+    parts.push(s.maxAttempts ? `${s.maxAttempts} lần làm` : "không giới hạn lần làm");
+    parts.push("đáp án hiện sau khi đóng bài");
+  } else {
+    parts.push("được làm lại, Canvas ghi điểm cao nhất");
+  }
+  return parts.join(" · ");
+}
+
+export async function signDeepLinkResponse(
+  state: DeepLinkState,
+  quiz?: LinkedQuiz,
+) {
+  const key = await importPKCS8(
+    await readFile(LTI_CONFIG.privateKeyPath, "utf8"),
+    "RS256",
+  );
+  const points = quiz?.settings?.pointsPossible ?? 100;
+  const settings = quiz?.settings;
+  // Canvas đặt unlock_at/lock_at từ `available` và due_at từ
+  // `submission.endDateTime` (Lti::IMS::Concerns::DeepLinkingModules).
+  const available =
+    settings?.availableFrom || settings?.availableUntil
+      ? {
+          available: {
+            ...(settings.availableFrom ? { startDateTime: settings.availableFrom } : {}),
+            ...(settings.availableUntil ? { endDateTime: settings.availableUntil } : {}),
+          },
+        }
+      : {};
+  const items = quiz
+    ? [
+        {
+          type: "ltiResourceLink",
+          title: quiz.title,
+          text: describeQuiz(quiz),
+          url: new URL(
+            `/learn/quizzes/${quiz.quiz_set_id}`,
+            LTI_CONFIG.redirectUri,
+          ).toString(),
+          custom: {
+            target_kind: "quiz_set",
+            target_id: quiz.quiz_set_id,
+            ags_score_maximum: String(points),
+          },
+          lineItem: {
+            scoreMaximum: points,
+            label: quiz.title,
+            resourceId: quiz.quiz_set_id,
+            tag: settings?.mode === "exam" ? "da-exam" : "da-quiz",
+          },
+          ...available,
+          ...(settings?.dueAt
+            ? { submission: { endDateTime: settings.dueAt } }
+            : {}),
+        },
+      ]
+    : [];
+  return signContentItems(state, items, key);
+}
+
+export type LinkedMicroContent = {
+  micro_content_id: string;
+  title: string;
+  questionCount?: number;
+};
+
+export async function signDeepLinkMicroContentResponse(
+  state: DeepLinkState,
+  microContent?: LinkedMicroContent,
+) {
+  const key = await importPKCS8(
+    await readFile(LTI_CONFIG.privateKeyPath, "utf8"),
+    "RS256",
+  );
+  const items = microContent
+    ? [
+        {
+          type: "ltiResourceLink",
+          title: microContent.title,
+          text: `Micro Content: Video bài giảng & câu hỏi củng cố (${microContent.questionCount ?? 0} câu)`,
+          url: new URL(
+            `/learn/micro-content/${microContent.micro_content_id}`,
+            LTI_CONFIG.redirectUri,
+          ).toString(),
+          custom: {
+            target_kind: "micro_content",
+            target_id: microContent.micro_content_id,
+          },
+        },
+      ]
+    : [];
+  return signContentItems(state, items, key);
+}
+
+/** LtiDeepLinkingResponse ký bằng key của tool; `items` rỗng = giảng viên huỷ. */
+export async function signContentItems(
+  state: Pick<DeepLinkState, "deploymentId" | "data">,
+  items: unknown[],
+  key?: Awaited<ReturnType<typeof importPKCS8>>,
+) {
+  const signingKey =
+    key ?? (await importPKCS8(await readFile(LTI_CONFIG.privateKeyPath, "utf8"), "RS256"));
+  return new SignJWT({
+    [`${LTI_CLAIM}message_type`]: "LtiDeepLinkingResponse",
+    [`${LTI_CLAIM}version`]: "1.3.0",
+    [`${LTI_CLAIM}deployment_id`]: state.deploymentId,
+    [`${DL_CLAIM}content_items`]: items,
+    ...(state.data !== undefined ? { [`${DL_CLAIM}data`]: state.data } : {}),
+    nonce: randomUUID(),
+  })
+    .setProtectedHeader({ alg: "RS256", kid: LTI_CONFIG.keyId, typ: "JWT" })
+    .setIssuer(LTI_CONFIG.clientId)
+    .setAudience(LTI_CONFIG.issuer)
+    .setIssuedAt()
+    .setExpirationTime("5m")
+    .setJti(randomUUID())
+    .sign(signingKey);
+}
+
+function escapeHtml(value: string) {
+  return value.replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ]!,
+  );
+}
+
+export function deepLinkForm(
+  returnUrl: string,
+  jwt: string,
+  message = "Đang thêm quiz vào Canvas…",
+): Response {
+  const nonce = randomUUID();
+  return new Response(
+    `<!doctype html><html lang="vi"><meta charset="utf-8"><title>Trở về Canvas</title><body><p>${escapeHtml(message)}</p><form id="return" method="post" action="${escapeHtml(returnUrl)}"><input type="hidden" name="JWT" value="${escapeHtml(jwt)}"><button type="submit">Tiếp tục về Canvas</button></form><script nonce="${nonce}">document.getElementById("return").submit()</script></body></html>`,
+    {
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Referrer-Policy": "no-referrer",
+        "Content-Security-Policy": `default-src 'none'; script-src 'nonce-${nonce}'; form-action ${new URL(returnUrl).origin}; base-uri 'none'; frame-ancestors ${new URL(returnUrl).origin}`,
+      },
+    },
+  );
+}

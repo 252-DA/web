@@ -69,7 +69,30 @@ export const LTI_CONFIG = {
   jwksUrl: withoutTrailingSlash(env("LTI_JWKS_URL") || defaultJwksUrl()),
   tokenUrl: withoutTrailingSlash(env("LTI_TOKEN_URL") || defaultTokenUrl()),
   deploymentId: env("LTI_DEPLOYMENT_ID") || "",
+  // Đăng ký phụ của cùng tool trên LMS. Canvas chỉ cho mỗi đăng ký một mục ở menu
+  // khóa học, nên mục "Trợ giảng AI" là một đăng ký riêng (client_id, deployment
+  // riêng) cùng trỏ về app này. clientId/deploymentId ở trên vẫn là đăng ký chính
+  // (AGS, deep link, Asset Processor).
+  extraClientIds: list(env("LTI_EXTRA_CLIENT_IDS")),
+  extraDeploymentIds: list(env("LTI_EXTRA_DEPLOYMENT_IDS")),
 };
+
+function list(value: string | undefined): string[] {
+  return (value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+export function knownClientIds(): string[] {
+  return [LTI_CONFIG.clientId, ...LTI_CONFIG.extraClientIds];
+}
+
+/** Không cấu hình deployment chính thì không kiểm (giữ nguyên hành vi cũ). */
+export function isKnownDeployment(deploymentId: string): boolean {
+  if (!LTI_CONFIG.deploymentId) return true;
+  return deploymentId === LTI_CONFIG.deploymentId || LTI_CONFIG.extraDeploymentIds.includes(deploymentId);
+}
 
 export const LTI_LOGIN_PATH = "/lti/login";
 export const LTI_LAUNCH_PATH = "/lti/launch";
