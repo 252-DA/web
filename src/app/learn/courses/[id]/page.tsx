@@ -7,7 +7,7 @@ interface Props {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
-type Course = { course_id: string; code: string; name: string; description: string | null };
+type Course = { course_id: string; code: string; subject_code?: string | null; name: string; description: string | null };
 type Lesson = {
   lesson_id: string;
   title: string;
@@ -40,7 +40,7 @@ export default async function CoursePage({ params, searchParams }: Props) {
     <main className="min-h-screen bg-slate-50 text-slate-950">
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto max-w-5xl px-4 py-5">
-          <p className="text-xs font-semibold uppercase text-slate-500">{course.code}</p>
+          <p className="text-xs font-semibold uppercase text-slate-500">{course.subject_code ?? course.code}</p>
           <h1 className="text-2xl font-semibold">{course.name}</h1>
           {course.description && <p className="mt-2 text-sm text-slate-600">{course.description}</p>}
           {(session.courseRole === "instructor" || session.courseRole === "ta") && (

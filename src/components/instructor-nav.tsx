@@ -1,4 +1,4 @@
-type InstructorNavItem = "dashboard" | "curriculum" | "documents" | "quizzes" | "review" | "micro-content" | "media" | "mastery" | "learner" | "chat" | "models";
+type InstructorNavItem = "dashboard" | "curriculum" | "documents" | "quizzes" | "banks" | "review" | "micro-content" | "media" | "mastery" | "learner" | "chat" | "models";
 
 type Props = {
   active: InstructorNavItem;
@@ -23,6 +23,7 @@ export function InstructorNav({ active, courseId, sid, isAdmin }: Props) {
     { key: "micro-content", label: "Micro Content", href: "/manage/micro-content" },
     { key: "media", label: "Kho Video", href: "/manage/media" },
     { key: "quizzes", label: "Soạn đề", href: "/manage/quizzes/new" },
+    { key: "banks", label: "Ngân hàng câu hỏi", href: "/manage/banks" },
     { key: "review", label: "Quiz & Review", href: "/manage/review" },
     { key: "mastery", label: "Mức nắm LO", href: "/manage/mastery" },
     { key: "learner", label: "Learner preview", href: `/learn/courses/${courseId}` },

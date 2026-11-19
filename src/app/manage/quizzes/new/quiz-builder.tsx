@@ -607,9 +607,25 @@ export function QuizBuilder({ sid, flow, initial }: { sid?: string; flow?: strin
               ))}
             </div>
           )}
+          {data.unmappedForeignItems && data.unmappedForeignItems.length > 0 && (
+            <details className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">
+              <summary className="cursor-pointer font-semibold">
+                ⚠ {data.unmappedForeignItems.length} câu từ ngân hàng khác chưa map được LO sang khoá này (không đưa vào đề được nếu chưa có LO trùng mã)
+              </summary>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                {data.unmappedForeignItems.slice(0, 20).map((item) => (
+                  <li key={item.quiz_id}>
+                    <span className="font-medium">{item.source_lo_code ?? "Chưa gắn LO"}</span>
+                    {item.bank?.title ? ` · ${item.bank.title}` : ""}: {item.question}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
           <QuestionPicker
             items={inScope}
             loOptions={los}
+            bankOptions={data.banks}
             selected={selected}
             pending={pending}
             onToggle={(q, on) => (on ? void keep(q) : setSelected((ids) => ids.filter((id) => id !== q.quiz_id)))}

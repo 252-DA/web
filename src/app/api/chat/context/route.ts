@@ -3,7 +3,7 @@ import { claimsFromSession, coreApi } from "@/lib/core-api";
 import type { ChatContext } from "@/lib/chat";
 import { readSessionFromRequest } from "@/lib/route-session";
 
-type Course = { code: string; name: string };
+type Course = { code: string; subject_code?: string | null; name: string };
 type CatalogDocument = { document_id: string; title: string; headings: string[] };
 
 const MAX_SUGGESTIONS = 4;
@@ -82,7 +82,7 @@ export async function GET(request: NextRequest) {
   const documents = catalog?.documents ?? [];
   const today = new Date().toISOString().slice(0, 10);
   const body: ChatContext = {
-    course: course ? { code: course.code, name: course.name } : null,
+    course: course ? { code: course.subject_code ?? course.code, name: course.name } : null,
     documents: documents.map((d) => ({ document_id: d.document_id, title: d.title })),
     suggestions: suggestionsFrom(documents, `${session.courseId}:${today}`),
   };

@@ -638,6 +638,8 @@ export const coreApi = {
     const { id, rest } = splitId(body, "bankId");
     return postCore<TResponse>(`/api/question-banks/${enc(id)}/shares`, claims, rest);
   },
+  listQuestionBankShareCandidates: <TResponse = unknown>(bankId: string, claims: BffClaims) =>
+    getCore<TResponse>(`/api/question-banks/${enc(bankId)}/share-candidates`, claims),
   unshareQuestionBank: <TResponse = unknown>(
     body: { bankId: string; granteeType: string; granteeId: string },
     claims: BffClaims,
@@ -648,6 +650,15 @@ export const coreApi = {
         granteeId: body.granteeId,
       }),
       claims,
+    ),
+  forkQuestionBankItem: <TResponse = unknown>(
+    body: { bankId: string; quizId: string; targetBankId: string },
+    claims: BffClaims,
+  ) =>
+    postCore<TResponse>(
+      `/api/question-banks/${enc(body.bankId)}/items/${enc(body.quizId)}/fork`,
+      claims,
+      { targetBankId: body.targetBankId },
     ),
   retireQuestionBankItem: <TResponse = unknown>(
     body: { bankId: string; quizId: string; restore?: boolean },

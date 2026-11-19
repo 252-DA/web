@@ -1,6 +1,7 @@
 import { InstructorNav } from "@/components/instructor-nav";
 import type { EssayForReview } from "@/lib/canvas-quiz";
 import { claimsFromSession, coreApi } from "@/lib/core-api";
+import { formatOriginAndModel, type QuestionBankSummary } from "@/lib/question-bank";
 import { bloomLabel, type ContentGenerationRequest, type LearningOutcomeOption } from "@/lib/quiz";
 import { hasValidAnswer, questionTypeLabel } from "@/lib/question-types";
 import { AnswerReview } from "@/components/answer-review";
@@ -27,16 +28,20 @@ type CardDraft = {
 };
 type QuizDraft = {
   quiz_id: string;
+  bank_id?: string;
   question: string;
   status: string;
   type: string;
+  origin?: string | null;
+  provenance?: unknown;
   options: unknown;
   correct_answer: unknown;
   explanation: string | null;
   bloom_level: number | null;
   source_chunk_ids: string[];
-  lessons?: LessonRef;
+  lessons?: LessonRef | null;
   learning_outcomes?: LearningOutcomeRef | null;
+  question_banks?: { bank_id: string; title: string } | null;
 };
 type Drafts = { cards: CardDraft[]; quizItems: QuizDraft[] };
 
@@ -89,15 +94,22 @@ export default async function ReviewPage({ searchParams }: Props) {
 
   const { sid, session } = access.active;
   const claims = claimsFromSession(session);
+  const selectedBankId = first(sp.bankId)?.trim() || "";
   let drafts: Drafts = { cards: [], quizItems: [] };
   let error = "";
-  try {
-    drafts = await coreApi.listReviewDrafts<Drafts>({ courseId: session.courseId }, claims);
-  } catch (err) {
-    error = err instanceof Error ? err.message : "Không thể tải review inbox.";
-  }
-
-  const [rawLearningOutcomes, recentRequests, essays] = await Promise.all([
+  const [draftsResult, banks, rawLearningOutcomes, recentRequests, essays] = await Promise.all([
+    coreApi
+      .listReviewDrafts<Drafts>(
+        { courseId: session.courseId, ...(selectedBankId ? { bankId: selectedBankId } : {}) },
+        claims,
+      )
+      .catch((err) => {
+        error = err instanceof Error ? err.message : "Không thể tải review inbox.";
+        return { cards: [], quizItems: [] } as Drafts;
+      }),
+    coreApi
+      .listQuestionBanks<QuestionBankSummary[]>({ courseId: session.courseId }, claims)
+      .catch(() => [] as QuestionBankSummary[]),
     coreApi.listLearningOutcomes<RawLearningOutcome[]>(session.courseId, claims).catch(() => []),
     coreApi
       .listContentGenerationRequests<ContentGenerationRequest[]>(
@@ -108,6 +120,7 @@ export default async function ReviewPage({ searchParams }: Props) {
       .catch(() => []),
     coreApi.listEssaysForReview<EssayForReview[]>(session.courseId, claims).catch(() => []),
   ]);
+  drafts = draftsResult;
   const learningOutcomes: LearningOutcomeOption[] = rawLearningOutcomes.map((lo) => ({
     lo_id: lo.lo_id,
     code: lo.code,
@@ -122,6 +135,8 @@ export default async function ReviewPage({ searchParams }: Props) {
       ...drafts.quizItems.map((quiz) => quiz.lessons?.lesson_id).filter(Boolean),
     ]),
   ) as string[];
+  const unassignedQuizzes = drafts.quizItems.filter((quiz) => !quiz.lessons?.lesson_id);
+  const editableBanks = banks.filter((b) => b.is_current_course || b.role === "EDIT");
   const approvedCount = [...drafts.cards, ...drafts.quizItems].filter((item) => item.status === "APPROVED").length;
   const waitingCount = drafts.cards.length + drafts.quizItems.length - approvedCount;
   const actionError = first(sp.reviewError);
@@ -169,13 +184,45 @@ export default async function ReviewPage({ searchParams }: Props) {
 
         {essays.length > 0 && <EssayQueue essays={essays} sid={sid} />}
 
-        <div className="flex items-end justify-between gap-4">
+        <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Review inbox</p>
             <h2 className="mt-1 text-xl font-semibold">Quiz và cards theo lesson</h2>
           </div>
           <p className="text-sm text-slate-500">{drafts.quizItems.length} quiz · {drafts.cards.length} cards</p>
         </div>
+
+        {editableBanks.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-medium text-slate-500">Lọc theo ngân hàng:</span>
+            <a
+              href={withSid("/manage/review", sid)}
+              className={`rounded-full border px-3 py-1 font-medium ${
+                !selectedBankId
+                  ? "border-slate-900 bg-slate-900 text-white"
+                  : "border-slate-300 bg-white text-slate-700 hover:border-slate-500"
+              }`}
+            >
+              Tất cả của khoá
+            </a>
+            {editableBanks.map((bank) => {
+              const active = selectedBankId === bank.bank_id;
+              return (
+                <a
+                  key={bank.bank_id}
+                  href={withSid(`/manage/review?bankId=${encodeURIComponent(bank.bank_id)}`, sid)}
+                  className={`rounded-full border px-3 py-1 font-medium ${
+                    active
+                      ? "border-slate-900 bg-slate-900 text-white"
+                      : "border-slate-300 bg-white text-slate-700 hover:border-slate-500"
+                  }`}
+                >
+                  {bank.title}
+                </a>
+              );
+            })}
+          </div>
+        )}
 
         {lessonIds.map((lessonId) => {
           const cards = drafts.cards.filter((card) => card.lessons?.lesson_id === lessonId);
@@ -215,72 +262,9 @@ export default async function ReviewPage({ searchParams }: Props) {
               </div>
 
               <div className="divide-y divide-slate-200">
-                {quizzes.map((quiz, quizIndex) => {
-                  const correctFound = hasValidAnswer(quiz);
-                  const meta = statusMeta(quiz.status);
-                  return (
-                    <article key={quiz.quiz_id} className="p-5">
-                      <div className="flex flex-wrap items-center gap-2 text-xs">
-                        <span className="font-semibold uppercase tracking-wide text-slate-500">Câu {quizIndex + 1}</span>
-                        <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 font-medium text-slate-600">AI generated</span>
-                        <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 font-medium text-slate-600">{questionTypeLabel(quiz.type)}</span>
-                        <span className={`rounded-full border px-2 py-0.5 font-semibold ${meta.className}`}>{meta.label}</span>
-                      </div>
-
-                      <h4 className="mt-3 text-base font-semibold leading-7 text-slate-950">{quiz.question}</h4>
-                      <div className="mt-4">
-                        <AnswerReview type={quiz.type} options={quiz.options} correctAnswer={quiz.correct_answer} compact />
-                      </div>
-                      {!correctFound && (
-                        <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                          Đáp án đúng không đúng dạng của kiểu câu: {JSON.stringify(quiz.correct_answer)}
-                        </p>
-                      )}
-
-                      <div className="mt-4 grid gap-3 rounded-xl bg-slate-50 p-4 md:grid-cols-[1fr_auto]">
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Giải thích</p>
-                          <p className="mt-1 text-sm leading-6 text-slate-700">{quiz.explanation || "Chưa có giải thích."}</p>
-                        </div>
-                        <div className="text-xs text-slate-500 md:text-right">
-                          <p>{quiz.learning_outcomes?.code || "Chưa gắn LO"}</p>
-                          <p className="mt-1">Bloom: {bloomLabel(quiz.bloom_level ?? quiz.learning_outcomes?.bloom_level)}</p>
-                          <p className="mt-1">{quiz.source_chunk_ids?.length || 0} nguồn tham chiếu</p>
-                        </div>
-                      </div>
-
-                      <div className="mt-4 flex flex-wrap items-start gap-2">
-                        {quiz.status === "APPROVED" ? (
-                          <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800">
-                            ✓ Đã approve
-                          </span>
-                        ) : (
-                          <>
-                            <form method="post" action={withSid(`/api/review/quiz-items/${quiz.quiz_id}/approve`, sid)}>
-                              <button className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800">Approve</button>
-                            </form>
-                            <details className="group rounded-lg border border-slate-300 bg-white">
-                              <summary className="cursor-pointer list-none px-4 py-2 text-sm font-medium text-slate-700">Yêu cầu chỉnh sửa</summary>
-                              <form
-                                method="post"
-                                action={withSid(`/api/review/quiz-items/${quiz.quiz_id}/reject`, sid)}
-                                className="flex min-w-72 gap-2 border-t border-slate-200 p-3"
-                              >
-                                <input
-                                  name="reason"
-                                  required
-                                  placeholder="Nêu lý do để lưu audit…"
-                                  className="h-10 min-w-0 flex-1 rounded-lg border border-slate-300 px-3 text-sm"
-                                />
-                                <button className="rounded-lg border border-red-300 px-3 text-sm font-semibold text-red-700">Gửi</button>
-                              </form>
-                            </details>
-                          </>
-                        )}
-                      </div>
-                    </article>
-                  );
-                })}
+                {quizzes.map((quiz, quizIndex) => (
+                  <QuizDraftArticle key={quiz.quiz_id} quiz={quiz} quizIndex={quizIndex} sid={sid} />
+                ))}
 
                 {cards.length > 0 && (
                   <details className="group bg-slate-50/60">
@@ -321,7 +305,21 @@ export default async function ReviewPage({ searchParams }: Props) {
           );
         })}
 
-        {!error && lessonIds.length === 0 && (
+        {unassignedQuizzes.length > 0 && (
+          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-200 bg-slate-50 p-5">
+              <h3 className="text-lg font-semibold">Câu hỏi từ ngân hàng / Fork (chưa gắn lesson)</h3>
+              <p className="mt-1 text-sm text-slate-500">{unassignedQuizzes.length} câu hỏi</p>
+            </div>
+            <div className="divide-y divide-slate-200">
+              {unassignedQuizzes.map((quiz, quizIndex) => (
+                <QuizDraftArticle key={quiz.quiz_id} quiz={quiz} quizIndex={quizIndex} sid={sid} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {!error && lessonIds.length === 0 && unassignedQuizzes.length === 0 && (
           <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center">
             <p className="font-medium text-slate-800">Review inbox đang trống</p>
             <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
@@ -337,6 +335,86 @@ export default async function ReviewPage({ searchParams }: Props) {
         )}
       </section>
     </main>
+  );
+}
+
+function QuizDraftArticle({ quiz, quizIndex, sid }: { quiz: QuizDraft; quizIndex: number; sid?: string }) {
+  const correctFound = hasValidAnswer(quiz);
+  const meta = statusMeta(quiz.status);
+  return (
+    <article className="p-5">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="font-semibold uppercase tracking-wide text-slate-500">Câu {quizIndex + 1}</span>
+        <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 font-medium text-slate-700">
+          {formatOriginAndModel(quiz.origin, quiz.provenance)}
+        </span>
+        {quiz.question_banks?.title && (
+          <span className="rounded-full bg-sky-50 px-2 py-0.5 font-medium text-sky-800">
+            {quiz.question_banks.title}
+          </span>
+        )}
+        <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 font-medium text-slate-600">
+          {questionTypeLabel(quiz.type)}
+        </span>
+        <span className={`rounded-full border px-2 py-0.5 font-semibold ${meta.className}`}>{meta.label}</span>
+      </div>
+
+      <h4 className="mt-3 text-base font-semibold leading-7 text-slate-950">{quiz.question}</h4>
+      <div className="mt-4">
+        <AnswerReview type={quiz.type} options={quiz.options} correctAnswer={quiz.correct_answer} compact />
+      </div>
+      {!correctFound && (
+        <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          Đáp án đúng không đúng dạng của kiểu câu: {JSON.stringify(quiz.correct_answer)}
+        </p>
+      )}
+
+      <div className="mt-4 grid gap-3 rounded-xl bg-slate-50 p-4 md:grid-cols-[1fr_auto]">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Giải thích</p>
+          <p className="mt-1 text-sm leading-6 text-slate-700">{quiz.explanation || "Chưa có giải thích."}</p>
+        </div>
+        <div className="text-xs text-slate-500 md:text-right">
+          <p>{quiz.learning_outcomes?.code || "Chưa gắn LO"}</p>
+          <p className="mt-1">Bloom: {bloomLabel(quiz.bloom_level ?? quiz.learning_outcomes?.bloom_level)}</p>
+          <p className="mt-1">{quiz.source_chunk_ids?.length || 0} nguồn tham chiếu</p>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-start gap-2">
+        {quiz.status === "APPROVED" ? (
+          <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800">
+            ✓ Đã approve
+          </span>
+        ) : (
+          <>
+            <form method="post" action={withSid(`/api/review/quiz-items/${quiz.quiz_id}/approve`, sid)}>
+              <button className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800">
+                Approve
+              </button>
+            </form>
+            <details className="group rounded-lg border border-slate-300 bg-white">
+              <summary className="cursor-pointer list-none px-4 py-2 text-sm font-medium text-slate-700">
+                Yêu cầu chỉnh sửa
+              </summary>
+              <form
+                method="post"
+                action={withSid(`/api/review/quiz-items/${quiz.quiz_id}/reject`, sid)}
+                className="flex min-w-72 gap-2 border-t border-slate-200 p-3"
+              >
+                <input
+                  name="reason"
+                  required
+                  placeholder="Nêu lý do để lưu audit…"
+                  className="h-10 min-w-0 flex-1 rounded-lg border border-slate-300 px-3 text-sm"
+                />
+                <button className="rounded-lg border border-red-300 px-3 text-sm font-semibold text-red-700">Gửi</button>
+              </form>
+            </details>
+          </>
+        )}
+      </div>
+    </article>
   );
 }
 

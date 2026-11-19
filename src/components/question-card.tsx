@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import type { ReviewQuiz } from "@/lib/canvas-quiz";
+import type { QuizBankMeta, ReviewQuiz } from "@/lib/canvas-quiz";
 import { bloomLabel } from "@/lib/quiz";
 import { questionTypeLabel } from "@/lib/question-types";
 import { AnswerReview } from "./answer-review";
@@ -32,6 +32,7 @@ type Tab = "new" | "bank" | "selected" | "discarded";
 export function QuestionPicker({
   items,
   loOptions,
+  bankOptions,
   selected,
   pending,
   onToggle,
@@ -44,6 +45,7 @@ export function QuestionPicker({
 }: {
   items: ReviewQuiz[];
   loOptions: Array<{ lo_id: string; code: string }>;
+  bankOptions?: QuizBankMeta[];
   selected: string[];
   pending: string[];
   onToggle: (quiz: ReviewQuiz, on: boolean) => void;
@@ -58,10 +60,16 @@ export function QuestionPicker({
   const [tab, setTab] = useState<Tab>("new");
   const [filterLo, setFilterLo] = useState("");
   const [filterLevel, setFilterLevel] = useState(0);
+  const [filterBank, setFilterBank] = useState("");
 
   const loCode = new Map(loOptions.map((lo) => [lo.lo_id, lo.code]));
   const matches = (q: ReviewQuiz) =>
-    (!filterLo || q.lo_id === filterLo) && (!filterLevel || q.bloom_level === filterLevel);
+    (!filterLo || q.lo_id === filterLo) &&
+    (!filterLevel || q.bloom_level === filterLevel) &&
+    (!filterBank || (q.bank?.bank_id ?? q.bank_id) === filterBank);
+  const showBankFilter =
+    Boolean(bankOptions?.length) &&
+    ((bankOptions?.length ?? 0) > 1 || Boolean(bankOptions?.some((b) => !b.is_current_course)));
   const groups: Record<Tab, ReviewQuiz[]> = {
     new: items.filter((q) => NEEDS_REVIEW.includes(q.status)),
     bank: items.filter((q) => KEPT.includes(q.status)),
@@ -128,6 +136,22 @@ export function QuestionPicker({
             </option>
           ))}
         </select>
+        {showBankFilter && bankOptions && (
+          <select
+            className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs"
+            value={filterBank}
+            onChange={(e) => setFilterBank(e.target.value)}
+            aria-label="Lọc theo ngân hàng"
+          >
+            <option value="">Mọi ngân hàng</option>
+            {bankOptions.map((b) => (
+              <option key={b.bank_id} value={b.bank_id}>
+                {b.title}
+                {b.home_course_name && !b.is_current_course ? ` (${b.home_course_name})` : ""}
+              </option>
+            ))}
+          </select>
+        )}
         <span className="ml-auto flex items-center gap-2 text-xs">
           {tab === "selected"
             ? groups.selected.length > 0 && (
@@ -234,30 +258,43 @@ function QuestionRow({
             {loCode && <span className="rounded bg-slate-100 px-1.5 py-0.5 font-medium text-slate-700">{loCode}</span>}
             <span className="text-slate-500">{bloomLabel(quiz.bloom_level)}</span>
             <span className="rounded bg-violet-50 px-1.5 py-0.5 font-medium text-violet-800">{questionTypeLabel(quiz.type, true)}</span>
+            {quiz.bank && (quiz.foreign || !quiz.bank.is_course_default) && (
+              <span className="rounded bg-indigo-50 px-1.5 py-0.5 font-medium text-indigo-800">
+                {quiz.bank.title}
+                {quiz.foreign && quiz.bank.home_course_name ? ` · ${quiz.bank.home_course_name}` : ""}
+              </span>
+            )}
+            {quiz.lo_mapping?.status === "statement_differs" && (
+              <span className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 font-medium text-amber-900">
+                ⚠ LO khác phát biểu
+              </span>
+            )}
             {quiz.status === "GENERATED_DRAFT" && <span className="rounded bg-sky-100 px-1.5 py-0.5 font-medium text-sky-800">Mới</span>}
             {quiz.status === "REVIEWING" && <span className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800">Đã sửa</span>}
             {pending && <span className="text-slate-500">Đang lưu…</span>}
           </span>
           <span className={`mt-0.5 block text-sm leading-6 ${open ? "" : "line-clamp-2"}`}>{quiz.question}</span>
         </button>
-        <span className="flex shrink-0 gap-1">
-          {discarded ? (
-            <button type="button" className={smallButton} disabled={pending} onClick={onRestore}>
-              Khôi phục
-            </button>
-          ) : (
-            <>
-              <button type="button" className={smallButton} disabled={pending} onClick={() => { setEditing(true); setOpen(true); }}>
-                Sửa
+        {quiz.can_edit !== false && (
+          <span className="flex shrink-0 gap-1">
+            {discarded ? (
+              <button type="button" className={smallButton} disabled={pending} onClick={onRestore}>
+                Khôi phục
               </button>
-              {!on && !KEPT.includes(quiz.status) && (
-                <button type="button" className={smallButton} disabled={pending} onClick={onDiscard}>
-                  Bỏ
+            ) : (
+              <>
+                <button type="button" className={smallButton} disabled={pending} onClick={() => { setEditing(true); setOpen(true); }}>
+                  Sửa
                 </button>
-              )}
-            </>
-          )}
-        </span>
+                {!on && !KEPT.includes(quiz.status) && (
+                  <button type="button" className={smallButton} disabled={pending} onClick={onDiscard}>
+                    Bỏ
+                  </button>
+                )}
+              </>
+            )}
+          </span>
+        )}
       </div>
       {open && (
         <div className="border-t border-slate-100 px-3 py-2">
@@ -273,6 +310,15 @@ function QuestionRow({
             />
           ) : (
             <>
+              {quiz.lo_mapping?.status === "statement_differs" && (
+                <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-950">
+                  <p className="font-semibold">
+                    Cảnh báo: LO {quiz.lo_mapping.source_lo_code} ở khoá nguồn có phát biểu khác khoá hiện tại
+                  </p>
+                  <p className="mt-1">Khoá nguồn: {quiz.lo_mapping.source_statement_vi}</p>
+                  <p className="mt-0.5">Khoá này: {quiz.lo_mapping.target_statement_vi}</p>
+                </div>
+              )}
               <AnswerReview type={quiz.type} options={quiz.options} correctAnswer={quiz.correct_answer} compact />
               <p className="mt-2 text-sm leading-6 text-slate-600">
                 <span className="text-xs text-slate-500">Giải thích · dựa trên {quiz.source_chunk_ids.length} đoạn slide: </span>

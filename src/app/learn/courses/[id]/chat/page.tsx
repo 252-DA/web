@@ -8,7 +8,7 @@ interface Props {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
-type Course = { course_id: string; code: string; name: string };
+type Course = { course_id: string; code: string; subject_code?: string | null; name: string };
 
 function withSid(path: string, sid?: string) {
   if (!sid) return path;
@@ -60,7 +60,7 @@ export default async function CourseChatPage({ params, searchParams }: Props) {
       <header className="shrink-0 border-b border-slate-200 bg-white px-4 py-3">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <a href={withSid(`/learn/courses/${id}`, sid)} className="text-sm text-slate-500 hover:text-slate-800">
-            ← {course?.code ?? "Khóa học"}
+            ← {course ? (course.subject_code ?? course.code) : "Khóa học"}
           </a>
           <h1 className="text-base font-semibold">Trợ giảng AI{course ? ` · ${course.name}` : ""}</h1>
         </div>

@@ -239,8 +239,10 @@ try {
     ["updateQuestionBank", [{ bankId: "b1", title: "Bank 2" }, claims], "PATCH", "/api/question-banks/b1", {}, { title: "Bank 2" }],
     ["listQuestionBankItems", [{ bankId: "b1", lo: "L.O.1", type: "MCQ_SINGLE", status: "APPROVED", origin: "MANUAL", search: "abc" }, claims], "GET", "/api/question-banks/b1/items", { lo: "L.O.1", type: "MCQ_SINGLE", status: "APPROVED", origin: "MANUAL", search: "abc" }, undefined],
     ["createQuestionBankItem", [{ bankId: "b1", type: "MCQ_SINGLE", question: "Q?", options: ["A", "B", "C", "D"], correct_answer: "A" }, claims], "POST", "/api/question-banks/b1/items", {}, { type: "MCQ_SINGLE", question: "Q?", options: ["A", "B", "C", "D"], correct_answer: "A" }],
+    ["listQuestionBankShareCandidates", ["b1", claims], "GET", "/api/question-banks/b1/share-candidates", {}, undefined],
     ["shareQuestionBank", [{ bankId: "b1", granteeType: "USER", granteeId: "u2", role: "USE" }, claims], "POST", "/api/question-banks/b1/shares", {}, { granteeType: "USER", granteeId: "u2", role: "USE" }],
     ["unshareQuestionBank", [{ bankId: "b1", granteeType: "USER", granteeId: "u2" }, claims], "DELETE", "/api/question-banks/b1/shares", { granteeType: "USER", granteeId: "u2" }, undefined],
+    ["forkQuestionBankItem", [{ bankId: "b1", quizId: "q1", targetBankId: "b2" }, claims], "POST", "/api/question-banks/b1/items/q1/fork", {}, { targetBankId: "b2" }],
     ["retireQuestionBankItem", [{ bankId: "b1", quizId: "q1", restore: true }, claims], "POST", "/api/question-banks/b1/items/q1/retire", {}, { restore: true }],
     ["listQuizItemVersions", ["q1", claims], "GET", "/api/quiz-items/q1/versions", {}, undefined],
   ];

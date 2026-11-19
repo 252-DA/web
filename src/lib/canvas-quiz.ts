@@ -13,16 +13,41 @@ export type QuizSetSettings = {
   availableUntil: string | null;
   dueAt: string | null;
 };
+export type QuizBankMeta = {
+  bank_id: string;
+  title: string;
+  home_course_id?: string;
+  home_course_name?: string;
+  is_course_default?: boolean;
+  is_current_course?: boolean;
+};
+
+export type LoMappingWarning =
+  | { status: "matched" }
+  | {
+      status: "statement_differs";
+      source_lo_code: string;
+      source_statement_vi: string;
+      target_statement_vi: string;
+    };
+
 export type ReviewQuiz = {
   quiz_id: string;
+  bank_id?: string;
   question: string;
   type: string;
   status: string;
+  origin?: string | null;
   options: unknown;
   correct_answer: unknown;
   explanation: string | null;
   bloom_level: number | null;
   lo_id: string | null;
+  source_lo_id?: string | null;
+  foreign?: boolean;
+  can_edit?: boolean;
+  bank?: QuizBankMeta | null;
+  lo_mapping?: LoMappingWarning | null;
   source_chunk_ids: string[];
   learning_outcomes?: { code: string } | null;
   created_at?: string | null;
@@ -209,5 +234,15 @@ export type QuizBuilderContext = {
     ready: boolean;
   }>;
   quizItems: ReviewQuiz[];
+  banks?: QuizBankMeta[];
+  unmappedForeignItems?: Array<{
+    quiz_id: string;
+    question: string;
+    type: string;
+    bloom_level: number | null;
+    bank: QuizBankMeta | null;
+    source_lo_code: string | null;
+    source_statement_vi: string | null;
+  }>;
   quizSets: SavedQuizSet[];
 };

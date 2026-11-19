@@ -16,7 +16,7 @@ interface Props {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
-type Course = { course_id: string; code: string; name: string };
+type Course = { course_id: string; code: string; subject_code?: string | null; name: string };
 
 function first(value?: string | string[]) {
   return Array.isArray(value) ? value[0] : value;
@@ -81,7 +81,7 @@ export default async function ManageMasteryPage({ searchParams }: Props) {
     <main className="min-h-screen bg-slate-50 text-slate-950">
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto max-w-7xl px-4 py-5">
-          <p className="text-xs font-semibold uppercase text-slate-500">{course?.code ?? ""}</p>
+          <p className="text-xs font-semibold uppercase text-slate-500">{course ? (course.subject_code ?? course.code) : ""}</p>
           <h1 className="text-2xl font-semibold">Mức nắm theo chuẩn đầu ra</h1>
           <p className="mt-1 text-sm text-slate-600">
             {course?.name ?? ""} · {data.students.length} sinh viên · {data.los.length} LO · mô hình{" "}
