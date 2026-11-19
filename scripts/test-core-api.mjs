@@ -171,7 +171,7 @@ try {
     ["lessonCards", ["l1", claims], "GET", "/api/lessons/l1/cards", { status: "PUBLISHED" }, undefined],
     ["lessonQuiz", ["l1", claims, "DRAFT"], "GET", "/api/lessons/l1/quiz", { status: "DRAFT" }, undefined],
     ["publishLesson", ["l1", claims], "POST", "/api/lessons/l1/publish", {}, undefined],
-    ["listReviewDrafts", [{ courseId: "c1", kind: "quiz" }, claims], "GET", "/api/review/drafts", { courseId: "c1", kind: "quiz" }, undefined],
+    ["listReviewDrafts", [{ courseId: "c1", kind: "quiz", bankId: "b1" }, claims], "GET", "/api/review/drafts", { courseId: "c1", kind: "quiz", bankId: "b1" }, undefined],
     ["approveCard", ["card-1", claims], "POST", "/api/review/cards/card-1/approve", {}, undefined],
     ["rejectCard", ["card-1", "bad", claims], "POST", "/api/review/cards/card-1/reject", {}, { reason: "bad" }],
     ["updateCard", ["card-1", { front: "A" }, claims], "PATCH", "/api/review/cards/card-1", {}, { content: { front: "A" } }],
@@ -234,6 +234,15 @@ try {
     ["forkVideoAsset", [{ assetId: "va1", targetCourseId: "c2" }, claims], "POST", "/api/video-assets/va1/fork", {}, { targetCourseId: "c2" }],
     ["checkVideoAssetHash", ["sha256", claims], "POST", "/api/video-assets/check-hash", {}, { fileHash: "sha256" }],
     ["attachVideoAssetToMicroContent", [{ microContentId: "mc1", assetId: null }, claims], "POST", "/api/video-assets/attach", {}, { microContentId: "mc1", assetId: null }],
+    ["listQuestionBanks", [{ courseId: "c1" }, claims], "GET", "/api/question-banks", { courseId: "c1" }, undefined],
+    ["createQuestionBank", [{ courseId: "c1", title: "Bank 1", visibility: "COURSE" }, claims], "POST", "/api/question-banks", {}, { courseId: "c1", title: "Bank 1", visibility: "COURSE" }],
+    ["updateQuestionBank", [{ bankId: "b1", title: "Bank 2" }, claims], "PATCH", "/api/question-banks/b1", {}, { title: "Bank 2" }],
+    ["listQuestionBankItems", [{ bankId: "b1", lo: "L.O.1", type: "MCQ_SINGLE", status: "APPROVED", origin: "MANUAL", search: "abc" }, claims], "GET", "/api/question-banks/b1/items", { lo: "L.O.1", type: "MCQ_SINGLE", status: "APPROVED", origin: "MANUAL", search: "abc" }, undefined],
+    ["createQuestionBankItem", [{ bankId: "b1", type: "MCQ_SINGLE", question: "Q?", options: ["A", "B", "C", "D"], correct_answer: "A" }, claims], "POST", "/api/question-banks/b1/items", {}, { type: "MCQ_SINGLE", question: "Q?", options: ["A", "B", "C", "D"], correct_answer: "A" }],
+    ["shareQuestionBank", [{ bankId: "b1", granteeType: "USER", granteeId: "u2", role: "USE" }, claims], "POST", "/api/question-banks/b1/shares", {}, { granteeType: "USER", granteeId: "u2", role: "USE" }],
+    ["unshareQuestionBank", [{ bankId: "b1", granteeType: "USER", granteeId: "u2" }, claims], "DELETE", "/api/question-banks/b1/shares", { granteeType: "USER", granteeId: "u2" }, undefined],
+    ["retireQuestionBankItem", [{ bankId: "b1", quizId: "q1", restore: true }, claims], "POST", "/api/question-banks/b1/items/q1/retire", {}, { restore: true }],
+    ["listQuizItemVersions", ["q1", claims], "GET", "/api/quiz-items/q1/versions", {}, undefined],
   ];
 
   // Assert every exported method on coreApi is tested

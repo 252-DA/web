@@ -321,11 +321,15 @@ export const coreApi = {
   publishLesson: <TResponse = unknown>(lessonId: string, claims: BffClaims) =>
     postCore<TResponse>(`/api/lessons/${enc(lessonId)}/publish`, claims),
   listReviewDrafts: <TResponse = unknown>(
-    body: { courseId: string; kind?: "card" | "quiz" },
+    body: { courseId: string; kind?: "card" | "quiz"; bankId?: string },
     claims: BffClaims,
   ) =>
     getCore<TResponse>(
-      withQuery("/api/review/drafts", { courseId: body.courseId, kind: body.kind }),
+      withQuery("/api/review/drafts", {
+        courseId: body.courseId,
+        kind: body.kind,
+        bankId: body.bankId,
+      }),
       claims,
     ),
   approveCard: <TResponse = unknown>(cardId: string, claims: BffClaims) =>
@@ -591,4 +595,69 @@ export const coreApi = {
     body: { microContentId: string; assetId: string | null },
     claims: BffClaims,
   ) => postCore<TResponse>("/api/video-assets/attach", claims, body),
+  listQuestionBanks: <TResponse = unknown>(
+    body: { courseId?: string } | undefined,
+    claims: BffClaims,
+  ) =>
+    getCore<TResponse>(
+      withQuery("/api/question-banks", { courseId: body?.courseId }),
+      claims,
+    ),
+  createQuestionBank: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
+    postCore<TResponse>("/api/question-banks", claims, body),
+  updateQuestionBank: <TResponse = unknown>(body: unknown, claims: BffClaims) => {
+    const { id, rest } = splitId(body, "bankId");
+    return patchCore<TResponse>(`/api/question-banks/${enc(id)}`, claims, rest);
+  },
+  listQuestionBankItems: <TResponse = unknown>(
+    body: {
+      bankId: string;
+      lo?: string;
+      type?: string;
+      status?: string;
+      origin?: string;
+      search?: string;
+    },
+    claims: BffClaims,
+  ) =>
+    getCore<TResponse>(
+      withQuery(`/api/question-banks/${enc(body.bankId)}/items`, {
+        lo: body.lo,
+        type: body.type,
+        status: body.status,
+        origin: body.origin,
+        search: body.search,
+      }),
+      claims,
+    ),
+  createQuestionBankItem: <TResponse = unknown>(body: unknown, claims: BffClaims) => {
+    const { id, rest } = splitId(body, "bankId");
+    return postCore<TResponse>(`/api/question-banks/${enc(id)}/items`, claims, rest);
+  },
+  shareQuestionBank: <TResponse = unknown>(body: unknown, claims: BffClaims) => {
+    const { id, rest } = splitId(body, "bankId");
+    return postCore<TResponse>(`/api/question-banks/${enc(id)}/shares`, claims, rest);
+  },
+  unshareQuestionBank: <TResponse = unknown>(
+    body: { bankId: string; granteeType: string; granteeId: string },
+    claims: BffClaims,
+  ) =>
+    deleteCore<TResponse>(
+      withQuery(`/api/question-banks/${enc(body.bankId)}/shares`, {
+        granteeType: body.granteeType,
+        granteeId: body.granteeId,
+      }),
+      claims,
+    ),
+  retireQuestionBankItem: <TResponse = unknown>(
+    body: { bankId: string; quizId: string; restore?: boolean },
+    claims: BffClaims,
+  ) =>
+    postCore<TResponse>(
+      `/api/question-banks/${enc(body.bankId)}/items/${enc(body.quizId)}/retire`,
+      claims,
+      body.restore !== undefined ? { restore: body.restore } : {},
+    ),
+  listQuizItemVersions: <TResponse = unknown>(quizId: string, claims: BffClaims) =>
+    getCore<TResponse>(`/api/quiz-items/${enc(quizId)}/versions`, claims),
 };
