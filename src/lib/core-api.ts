@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mintCoreJwt, type BffClaims } from "./bff-jwt";
 import type { LtiSession } from "./session";
 
@@ -8,11 +9,13 @@ const LONG_TIMEOUT_MS = 120_000;
 export class CoreApiError extends Error {
   status: number;
   body: unknown;
+  requestId?: string;
 
-  constructor(status: number, body: unknown) {
+  constructor(status: number, body: unknown, requestId?: string) {
     super(typeof body === "string" ? body : `Core API Error: ${status}`);
     this.status = status;
     this.body = body;
+    this.requestId = requestId;
   }
 }
 
@@ -108,8 +111,10 @@ async function requestCore<TResponse>(
   options: RequestOptions = {},
 ): Promise<TResponse> {
   const token = await mintCoreJwt(claims);
+  const requestId = randomUUID();
   const headers: Record<string, string> = {
     authorization: `Bearer ${token}`,
+    "x-request-id": requestId,
   };
 
   const hasBody = options.body !== undefined;
@@ -129,14 +134,16 @@ async function requestCore<TResponse>(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new CoreApiError(502, `Core API request failed (${method} ${path}): ${message}`);
+    throw new CoreApiError(502, `Core API request failed (${method} ${path}): ${message}`, requestId);
   }
 
+  const responseRequestId = response.headers.get("x-request-id") || requestId;
   const text = await response.text();
   if (!response.ok) {
     throw new CoreApiError(
       response.status,
       extractErrorMessage(text, response.statusText, response.status),
+      responseRequestId,
     );
   }
 
@@ -147,7 +154,7 @@ async function requestCore<TResponse>(
   try {
     return JSON.parse(text) as TResponse;
   } catch {
-    throw new CoreApiError(502, `Core API returned invalid JSON (${method} ${path})`);
+    throw new CoreApiError(502, `Core API returned invalid JSON (${method} ${path})`, responseRequestId);
   }
 }
 
