@@ -30,6 +30,46 @@ export type QuestionDraft = {
   explanation: string;
 };
 
+export function normalizeOptionValue(opt: unknown): string {
+  if (opt === null || opt === undefined) return "";
+  if (typeof opt === "object") {
+    const record = opt as Record<string, unknown>;
+    return String(record.text ?? record.label ?? record.value ?? "");
+  }
+  return String(opt);
+}
+
+export function normalizeQuestionItem(q: QuestionDraft, idx: number): QuestionDraft {
+  let opts = q.options;
+  let correct = q.correctAnswer;
+
+  if (Array.isArray(opts)) {
+    const normalizedOpts = opts.map(normalizeOptionValue);
+    // Nếu correctAnswer là chữ cái mã hóa ("A", "B", "C", "D") và options ban đầu là objects
+    if (typeof correct === "string" && correct.length === 1) {
+      const matchIdx = opts.findIndex((o) => {
+        if (typeof o === "object" && o !== null) {
+          const rec = o as Record<string, unknown>;
+          return String(rec.key ?? rec.id ?? "").toUpperCase() === correct.toUpperCase();
+        }
+        return false;
+      });
+      if (matchIdx >= 0) {
+        correct = normalizedOpts[matchIdx];
+      }
+    }
+    opts = normalizedOpts;
+  }
+
+  return {
+    ...q,
+    position: idx + 1,
+    options: opts,
+    correctAnswer: correct,
+    explanation: q.explanation || "",
+  };
+}
+
 interface Props {
   microContentId: string;
   initialQuestions: QuestionDraft[];
@@ -39,11 +79,7 @@ interface Props {
 export function QuestionPanel({ microContentId, initialQuestions, sid }: Props) {
   const router = useRouter();
   const [questions, setQuestions] = useState<QuestionDraft[]>(() =>
-    initialQuestions.map((q, idx) => ({
-      ...q,
-      position: idx + 1,
-      explanation: q.explanation || "",
-    })),
+    initialQuestions.map(normalizeQuestionItem),
   );
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
@@ -79,11 +115,7 @@ export function QuestionPanel({ microContentId, initialQuestions, sid }: Props) 
             const item = await itemRes.json();
             if (Array.isArray(item.questions)) {
               setQuestions(
-                item.questions.map((q: QuestionDraft, idx: number) => ({
-                  ...q,
-                  position: idx + 1,
-                  explanation: q.explanation || "",
-                })),
+                item.questions.map(normalizeQuestionItem),
               );
             }
           }
@@ -413,32 +445,42 @@ export function QuestionPanel({ microContentId, initialQuestions, sid }: Props) 
                   <label className="block text-xs font-semibold uppercase text-slate-500">
                     Phương án & Đáp án đúng
                   </label>
-                  {(Array.isArray(q.options) ? q.options : ["", "", "", ""]).map((opt, optIdx) => (
-                    <div key={optIdx} className="flex items-center gap-3">
-                      <input
-                        type="radio"
-                        name={`mcq_single_${index}`}
-                        checked={q.correctAnswer === opt && Boolean(opt)}
-                        onChange={() => updateQuestion(index, { correctAnswer: opt })}
-                        className="h-4 w-4 text-sky-600 focus:ring-sky-500"
-                      />
-                      <input
-                        type="text"
-                        value={String(opt)}
-                        onChange={(e) => {
-                          const newOpts = [...(q.options as string[])];
-                          const oldVal = newOpts[optIdx];
-                          newOpts[optIdx] = e.target.value;
-                          updateQuestion(index, {
-                            options: newOpts,
-                            correctAnswer: q.correctAnswer === oldVal ? e.target.value : q.correctAnswer,
-                          });
-                        }}
-                        placeholder={`Lựa chọn ${String.fromCharCode(65 + optIdx)}`}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100"
-                      />
-                    </div>
-                  ))}
+                  {(Array.isArray(q.options) ? q.options : ["", "", "", ""]).map((opt, optIdx) => {
+                    const optText = normalizeOptionValue(opt);
+                    const isChecked = Boolean(optText) && (
+                      q.correctAnswer === optText ||
+                      q.correctAnswer === opt ||
+                      (typeof q.correctAnswer === "string" &&
+                        q.correctAnswer.toUpperCase() === String.fromCharCode(65 + optIdx))
+                    );
+                    return (
+                      <div key={optIdx} className="flex items-center gap-3">
+                        <input
+                          type="radio"
+                          name={`mcq_single_${index}`}
+                          checked={isChecked}
+                          onChange={() => updateQuestion(index, { correctAnswer: optText })}
+                          className="h-4 w-4 text-sky-600 focus:ring-sky-500"
+                        />
+                        <input
+                          type="text"
+                          value={optText}
+                          onChange={(e) => {
+                            const newOpts = (Array.isArray(q.options) ? q.options : []).map(normalizeOptionValue);
+                            while (newOpts.length <= optIdx) newOpts.push("");
+                            const oldVal = newOpts[optIdx];
+                            newOpts[optIdx] = e.target.value;
+                            updateQuestion(index, {
+                              options: newOpts,
+                              correctAnswer: q.correctAnswer === oldVal ? e.target.value : q.correctAnswer,
+                            });
+                          }}
+                          placeholder={`Lựa chọn ${String.fromCharCode(65 + optIdx)}`}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100"
+                        />
+                      </div>
+                    );
+                  })}
                   <p className="text-xs text-slate-500">Tick chọn phương án đúng duy nhất.</p>
                 </div>
               )}
@@ -449,29 +491,32 @@ export function QuestionPanel({ microContentId, initialQuestions, sid }: Props) 
                     Các phương án (nhiều đáp án đúng)
                   </label>
                   {(Array.isArray(q.options) ? q.options : ["", "", "", ""]).map((opt, optIdx) => {
+                    const optText = normalizeOptionValue(opt);
                     const isChecked =
-                      Array.isArray(q.correctAnswer) && q.correctAnswer.includes(opt);
+                      Array.isArray(q.correctAnswer) &&
+                      (q.correctAnswer.includes(optText) || q.correctAnswer.includes(opt));
                     return (
                       <div key={optIdx} className="flex items-center gap-3">
                         <input
                           type="checkbox"
-                          checked={isChecked && Boolean(opt)}
+                          checked={isChecked && Boolean(optText)}
                           onChange={(e) => {
                             const current = Array.isArray(q.correctAnswer)
                               ? [...q.correctAnswer]
                               : [];
                             const updated = e.target.checked
-                              ? [...current, opt]
-                              : current.filter((x) => x !== opt);
+                              ? [...current, optText]
+                              : current.filter((x) => x !== optText && x !== opt);
                             updateQuestion(index, { correctAnswer: updated });
                           }}
                           className="h-4 w-4 rounded text-sky-600 focus:ring-sky-500"
                         />
                         <input
                           type="text"
-                          value={String(opt)}
+                          value={optText}
                           onChange={(e) => {
-                            const newOpts = [...(q.options as string[])];
+                            const newOpts = (Array.isArray(q.options) ? q.options : []).map(normalizeOptionValue);
+                            while (newOpts.length <= optIdx) newOpts.push("");
                             const oldVal = newOpts[optIdx];
                             newOpts[optIdx] = e.target.value;
                             const updatedCorrect = Array.isArray(q.correctAnswer)
