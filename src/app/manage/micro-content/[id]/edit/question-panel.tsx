@@ -47,10 +47,11 @@ export function normalizeQuestionItem(q: QuestionDraft, idx: number): QuestionDr
     const normalizedOpts = opts.map(normalizeOptionValue);
     // Nếu correctAnswer là chữ cái mã hóa ("A", "B", "C", "D") và options ban đầu là objects
     if (typeof correct === "string" && correct.length === 1) {
+      const correctUpper = correct.toUpperCase();
       const matchIdx = opts.findIndex((o) => {
         if (typeof o === "object" && o !== null) {
           const rec = o as Record<string, unknown>;
-          return String(rec.key ?? rec.id ?? "").toUpperCase() === correct.toUpperCase();
+          return String(rec.key ?? rec.id ?? "").toUpperCase() === correctUpper;
         }
         return false;
       });

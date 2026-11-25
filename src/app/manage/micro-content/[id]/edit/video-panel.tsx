@@ -67,6 +67,13 @@ interface SceneCheck {
   regeneration_attempts?: number;
 }
 
+type SceneVisualMode = "SLIDE_STATIC" | "MANIM_AUTO" | "MANIM_TEMPLATE" | "MANIM_CUSTOM";
+
+const MANIM_TEMPLATE_OPTIONS = [
+  { id: "insertion_sort", label: "Straight Insertion Sort (Chèn trực tiếp)", defaultArray: "23, 78, 45, 8, 32, 56" },
+  { id: "merge_sort", label: "Merge Sort (Sắp xếp trộn — Chia để trị)", defaultArray: "38, 27, 43, 3, 9, 82" },
+];
+
 interface Scene {
   title: string;
   bullets: string[];
@@ -75,6 +82,13 @@ interface Scene {
   slide_page?: number;
   source_pages?: number[];
   check?: SceneCheck;
+  visual_mode?: SceneVisualMode;
+  manim_template?: string;
+  manim_params?: { array?: number[]; title?: string };
+  manim_source_code?: string;
+  manim_attempts?: number;
+  manim_error?: string | null;
+  fallback_used?: boolean;
 }
 
 interface Script {
@@ -662,7 +676,20 @@ export function VideoPanel({ microContent, sid }: Props) {
           </span>
         </div>
         {microContent.videoError && (
-          <div className="mt-3 rounded-lg bg-rose-50 p-3 text-xs text-rose-700 border border-rose-200">
+          <div
+            className={`mt-3 rounded-lg p-3 text-xs border ${
+              microContent.videoStatus === "READY" &&
+              microContent.videoError.startsWith("FLAGGED")
+                ? "bg-amber-50 text-amber-900 border-amber-300"
+                : "bg-rose-50 text-rose-700 border-rose-200"
+            }`}
+          >
+            {microContent.videoStatus === "READY" &&
+              microContent.videoError.startsWith("FLAGGED") && (
+                <span className="mr-1.5 inline-block rounded bg-amber-200 px-1.5 py-0.5 text-[10px] font-bold uppercase text-amber-950">
+                  FLAGGED
+                </span>
+              )}
             {microContent.videoError}
           </div>
         )}
@@ -1220,6 +1247,20 @@ export function VideoPanel({ microContent, sid }: Props) {
                               ⚠ Cần kiểm tra nguồn
                             </span>
                           )}
+                          {scene.visual_mode && scene.visual_mode !== "SLIDE_STATIC" && (
+                            <span className="rounded bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+                              {scene.visual_mode === "MANIM_AUTO"
+                                ? "🎬 Manim AI"
+                                : scene.visual_mode === "MANIM_TEMPLATE"
+                                ? `🎬 Mẫu: ${scene.manim_template || "Chưa chọn"}`
+                                : "💻 Manim Custom"}
+                            </span>
+                          )}
+                          {(scene.fallback_used || scene.manim_error) && (
+                            <span className="rounded bg-amber-100 border border-amber-300 px-2 py-0.5 text-[11px] font-semibold text-amber-900">
+                              ⚠ FLAGGED (Fallback Slide)
+                            </span>
+                          )}
                           {(Array.isArray(scene.source_pages) && scene.source_pages.length > 0
                             ? scene.source_pages
                             : typeof scene.slide_page === "number"
@@ -1282,6 +1323,113 @@ export function VideoPanel({ microContent, sid }: Props) {
                           Lý do gắn cờ: {scene.check.reason || scene.check.notes}
                         </div>
                       )}
+
+                      {scene.manim_error && (
+                        <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-900">
+                          <strong>Cảnh báo Fallback Manim:</strong> {scene.manim_error}
+                          {scene.manim_attempts ? ` (${scene.manim_attempts} lần thử)` : ""}
+                        </div>
+                      )}
+
+                      {/* Cấu hình Trực quan hóa cấp cảnh (Slide tĩnh / Manim Hybrid) */}
+                      <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3 space-y-2.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <label className="text-xs font-semibold text-slate-700">
+                            Chế độ hình ảnh của cảnh (Hybrid Composition)
+                          </label>
+                          <select
+                            value={scene.visual_mode || "SLIDE_STATIC"}
+                            onChange={(e) => {
+                              const nextMode = e.target.value as SceneVisualMode;
+                              const patch: Partial<Scene> = { visual_mode: nextMode };
+                              if (nextMode === "MANIM_TEMPLATE" && !scene.manim_template) {
+                                patch.manim_template = "insertion_sort";
+                                patch.manim_params = { array: [23, 78, 45, 8, 32, 56] };
+                              }
+                              updateScene(idx, patch);
+                            }}
+                            className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-800 focus:border-indigo-500 focus:outline-none"
+                          >
+                            <option value="SLIDE_STATIC">📄 Slide tĩnh (Mặc định)</option>
+                            <option value="MANIM_AUTO">✨ Hoạt họa Manim AI tự sinh (MANIM_AUTO)</option>
+                            <option value="MANIM_TEMPLATE">🎬 Hoạt họa Mẫu thuật toán (MANIM_TEMPLATE)</option>
+                            <option value="MANIM_CUSTOM">💻 Mã nguồn Manim tùy chỉnh (MANIM_CUSTOM)</option>
+                          </select>
+                        </div>
+
+                        {scene.visual_mode === "MANIM_AUTO" && (
+                          <p className="text-[11px] text-indigo-700">
+                            AI (Coder ↔ Error Fixer, tối đa 3 vòng) sẽ tự động lập trình hoạt họa Manim khớp với lời giảng của cảnh này. Nếu lỗi sau 3 lần thử, hệ thống tự động lùi về Slide tĩnh và gắn cờ FLAGGED.
+                          </p>
+                        )}
+
+                        {scene.visual_mode === "MANIM_TEMPLATE" && (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1">
+                            <div>
+                              <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                                Chọn mẫu thuật toán chuẩn hóa
+                              </label>
+                              <select
+                                value={scene.manim_template || "insertion_sort"}
+                                onChange={(e) => {
+                                  const tpl = MANIM_TEMPLATE_OPTIONS.find((t) => t.id === e.target.value);
+                                  const parsedArr = tpl
+                                    ? tpl.defaultArray.split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !Number.isNaN(n))
+                                    : [23, 78, 45, 8, 32, 56];
+                                  updateScene(idx, {
+                                    manim_template: e.target.value,
+                                    manim_params: { ...(scene.manim_params || {}), array: parsedArr },
+                                  });
+                                }}
+                                className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none"
+                              >
+                                {MANIM_TEMPLATE_OPTIONS.map((t) => (
+                                  <option key={t.id} value={t.id}>
+                                    {t.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                                Mảng dữ liệu đầu vào (3–8 số nguyên, cách nhau bởi dấu phẩy)
+                              </label>
+                              <input
+                                type="text"
+                                defaultValue={(scene.manim_params?.array || [23, 78, 45, 8, 32, 56]).join(", ")}
+                                onBlur={(e) => {
+                                  const arr = e.target.value
+                                    .split(",")
+                                    .map((s) => parseInt(s.trim(), 10))
+                                    .filter((n) => !Number.isNaN(n));
+                                  if (arr.length >= 3 && arr.length <= 8) {
+                                    updateScene(idx, {
+                                      manim_params: { ...(scene.manim_params || {}), array: arr },
+                                    });
+                                  }
+                                }}
+                                placeholder="Ví dụ: 38, 27, 43, 3, 9, 82"
+                                className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs font-mono focus:border-indigo-500 focus:outline-none"
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        {(scene.visual_mode === "MANIM_CUSTOM" || Boolean(scene.manim_source_code)) && (
+                          <div className="pt-1">
+                            <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                              Mã nguồn Python Manim (Lớp <code>GeneratedScene(Scene)</code> — không dùng MathTex/LaTeX)
+                            </label>
+                            <textarea
+                              rows={6}
+                              value={scene.manim_source_code || ""}
+                              onChange={(e) => updateScene(idx, { manim_source_code: e.target.value })}
+                              placeholder={"from manim import *\n\nclass GeneratedScene(Scene):\n    def construct(self):\n        ..."}
+                              className="w-full rounded border border-slate-300 bg-slate-900 p-2.5 text-xs font-mono text-slate-100 focus:border-indigo-500 focus:outline-none"
+                            />
+                          </div>
+                        )}
+                      </div>
 
                       <div>
                         <label className="block text-xs font-medium text-slate-600 mb-1">
