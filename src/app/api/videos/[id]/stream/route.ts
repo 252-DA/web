@@ -39,6 +39,16 @@ export async function GET(
     return NextResponse.json(streamInfo);
   }
 
+  if (streamInfo.mimeType === "video/youtube") {
+    return NextResponse.json(
+      {
+        error: "Video YouTube được phát qua khung nhúng iframe.",
+        embedUrl: streamInfo.url,
+      },
+      { status: 400 },
+    );
+  }
+
   // Stream proxy with Range support (MinIO is internal minio:9000)
   const range = request.headers.get("range");
   const upstream = await fetch(streamInfo.url, {

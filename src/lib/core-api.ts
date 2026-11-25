@@ -591,4 +591,17 @@ export const coreApi = {
     body: { microContentId: string; assetId: string | null },
     claims: BffClaims,
   ) => postCore<TResponse>("/api/video-assets/attach", claims, body),
+  recommendVideoAssets: <TResponse = unknown>(
+    body: { microContentId: string; limit?: number },
+    claims: BffClaims,
+  ) =>
+    getCore<TResponse>(
+      withQuery("/api/video-assets/recommendations", {
+        microContentId: body.microContentId,
+        limit: body.limit,
+      }),
+      claims,
+    ),
+  attachYoutubeVideo: <TResponse = unknown>(body: unknown, claims: BffClaims) =>
+    postCore<TResponse>("/api/video-assets/youtube-attach", claims, body),
 };

@@ -8,7 +8,15 @@ export interface LearnMicroContentData {
   id: string;
   title: string;
   description: string | null;
+  videoSource?: string;
   videoDurationMs: number | null;
+  videoMimeType?: string | null;
+  youtubeVideoId?: string | null;
+  youtubeEmbedUrl?: string | null;
+  youtubeWatchUrl?: string | null;
+  youtubeChannelTitle?: string | null;
+  youtubeStartSec?: number | null;
+  youtubeEndSec?: number | null;
   requiredWatchPercent: number;
   passingScore: number;
   hasSubtitles?: boolean;
@@ -48,7 +56,14 @@ export function LearnMicroContentClient({ microContent, initialResult, sid, isSt
         microContentId={microContent.id}
         sid={sid}
         title={microContent.title}
+        videoSource={microContent.videoSource}
         durationMs={microContent.videoDurationMs}
+        youtubeVideoId={microContent.youtubeVideoId}
+        youtubeEmbedUrl={microContent.youtubeEmbedUrl}
+        youtubeWatchUrl={microContent.youtubeWatchUrl}
+        youtubeChannelTitle={microContent.youtubeChannelTitle}
+        youtubeStartSec={microContent.youtubeStartSec}
+        youtubeEndSec={microContent.youtubeEndSec}
         hasSubtitles={microContent.hasSubtitles}
         sceneTimeline={microContent.sceneTimeline}
         transcriptText={microContent.transcriptText}

@@ -35,6 +35,16 @@ export async function GET(
     return NextResponse.json({ error: message }, { status });
   }
 
+  if (videoInfo.mimeType === "video/youtube") {
+    return NextResponse.json(
+      {
+        error: "Video YouTube được phát qua khung nhúng iframe.",
+        embedUrl: videoInfo.url,
+      },
+      { status: 400 },
+    );
+  }
+
   const range = request.headers.get("range");
   const upstream = await fetch(videoInfo.url, {
     headers: range ? { Range: range } : undefined,

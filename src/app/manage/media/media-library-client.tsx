@@ -3,6 +3,15 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 
+export interface VideoYoutubeOptions {
+  youtubeVideoId?: string | null;
+  channelTitle?: string | null;
+  thumbnailUrl?: string | null;
+  watchUrl?: string | null;
+  startSec?: number | null;
+  endSec?: number | null;
+}
+
 export interface VideoAsset {
   asset_id: string;
   course_id: string | null;
@@ -14,7 +23,7 @@ export interface VideoAsset {
   duration_ms: number | null;
   size_bytes: number | null;
   mime_type: string | null;
-  source_type: "USER_UPLOAD" | "AI_STUDIO";
+  source_type: "USER_UPLOAD" | "AI_STUDIO" | "YOUTUBE";
   status: "UPLOADING" | "PROCESSING" | "READY" | "FAILED";
   transcript_status: "NONE" | "PENDING" | "PROCESSING" | "INDEXED" | "FAILED";
   visibility: "PRIVATE" | "COURSE" | "PUBLIC";
@@ -22,6 +31,7 @@ export interface VideoAsset {
   allow_fork: boolean;
   forked_from_id: string | null;
   ai_prompt: string | null;
+  ai_options?: VideoYoutubeOptions | null;
   error_message: string | null;
   created_at: string;
   updated_at: string;
@@ -30,14 +40,91 @@ export interface VideoAsset {
   courseCode?: string;
 }
 
+export interface RecommendedVideoAsset extends VideoAsset {
+  matchScore: number;
+  matchReasons: string[];
+  matchedKeywords: string[];
+  isCurrentlyAttached?: boolean;
+}
+
+export interface YoutubeSearchItem {
+  videoId: string;
+  title: string;
+  channelTitle: string;
+  descriptionSnippet: string;
+  durationText: string | null;
+  durationMs: number | null;
+  viewCountText: string | null;
+  publishedText: string | null;
+  thumbnailUrl: string;
+  watchUrl: string;
+  embedUrl: string;
+}
+
+export interface YoutubeAttachPayload {
+  youtubeVideoId: string;
+  title: string;
+  description?: string;
+  channelTitle?: string;
+  durationMs?: number;
+  startSec?: number;
+  endSec?: number;
+  tags?: string[];
+}
+
 interface Props {
   sid: string;
   courseId: string;
   userSub?: string;
   userDisplayName?: string;
+  /** Ngữ cảnh bài học Micro Content để gợi ý video tương tự và gắn video YouTube */
+  microContentId?: string;
+  microContentTitle?: string;
+  microContentDescription?: string | null;
   /** Chế độ nhúng vào modal Micro Content để chọn video */
-  onSelectVideo?: (asset: VideoAsset) => void;
+  onSelectVideo?: (asset: VideoAsset) => void | Promise<void>;
+  onAttachYoutube?: (payload: YoutubeAttachPayload) => Promise<void>;
   selectedAssetId?: string | null;
+}
+
+function getAssetYoutubeId(asset: VideoAsset): string | null {
+  if (asset.ai_options?.youtubeVideoId) return asset.ai_options.youtubeVideoId;
+  if (asset.object_key?.startsWith("youtube:")) {
+    return asset.object_key.slice("youtube:".length);
+  }
+  return null;
+}
+
+function getAssetYoutubeThumbnail(asset: VideoAsset): string | null {
+  if (asset.ai_options?.thumbnailUrl) return asset.ai_options.thumbnailUrl;
+  const id = getAssetYoutubeId(asset);
+  return id ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : null;
+}
+
+function getAssetYoutubeEmbedUrl(asset: VideoAsset): string | null {
+  const id = getAssetYoutubeId(asset);
+  if (!id) return null;
+  const params = new URLSearchParams({ rel: "0", modestbranding: "1", autoplay: "1" });
+  if (typeof asset.ai_options?.startSec === "number" && asset.ai_options.startSec > 0) {
+    params.set("start", String(Math.floor(asset.ai_options.startSec)));
+  }
+  if (typeof asset.ai_options?.endSec === "number" && asset.ai_options.endSec > 0) {
+    params.set("end", String(Math.floor(asset.ai_options.endSec)));
+  }
+  return `https://www.youtube.com/embed/${id}?${params.toString()}`;
+}
+
+function buildYoutubePreviewEmbedUrl(
+  videoId: string,
+  startSec?: string,
+  endSec?: string,
+): string {
+  const params = new URLSearchParams({ rel: "0", modestbranding: "1", autoplay: "1" });
+  const s = startSec ? parseInt(startSec, 10) : NaN;
+  const e = endSec ? parseInt(endSec, 10) : NaN;
+  if (Number.isFinite(s) && s > 0) params.set("start", String(s));
+  if (Number.isFinite(e) && e > 0) params.set("end", String(e));
+  return `https://www.youtube.com/embed/${videoId}?${params.toString()}`;
 }
 
 function formatDuration(ms: number | null) {
@@ -68,10 +155,38 @@ export function MediaLibraryClient({
   courseId,
   userSub,
   userDisplayName,
+  microContentId,
+  microContentTitle,
+  microContentDescription,
   onSelectVideo,
+  onAttachYoutube,
   selectedAssetId,
 }: Props) {
   const router = useRouter();
+
+  // Chế độ con khi nhúng trong trình soạn Micro Content
+  const [pickerTab, setPickerTab] = useState<"LIBRARY" | "YOUTUBE">("LIBRARY");
+
+  // Đề xuất tương tự trong kho học liệu
+  const [recommendations, setRecommendations] = useState<RecommendedVideoAsset[]>([]);
+  const [recLoading, setRecLoading] = useState(false);
+  const [recError, setRecError] = useState<string | null>(null);
+  const [recKeywords, setRecKeywords] = useState<string[]>([]);
+  const [suggestedQuery, setSuggestedQuery] = useState<string>(microContentTitle || "");
+
+  // Tìm kiếm YouTube
+  const [ytQuery, setYtQuery] = useState<string>(microContentTitle || "");
+  const [ytLang, setYtLang] = useState<"all" | "vi" | "en">("all");
+  const [ytItems, setYtItems] = useState<YoutubeSearchItem[]>([]);
+  const [ytSource, setYtSource] = useState<string | null>(null);
+  const [ytLoading, setYtLoading] = useState(false);
+  const [ytError, setYtError] = useState<string | null>(null);
+  const [ytHasSearched, setYtHasSearched] = useState(false);
+  const [attachingYtId, setAttachingYtId] = useState<string | null>(null);
+  const [attachedYtId, setAttachedYtId] = useState<string | null>(null);
+  const [previewYoutube, setPreviewYoutube] = useState<YoutubeSearchItem | null>(null);
+  const [ytStartInput, setYtStartInput] = useState("");
+  const [ytEndInput, setYtEndInput] = useState("");
 
   // Danh sách và bộ lọc
   const [items, setItems] = useState<VideoAsset[]>([]);
@@ -136,6 +251,123 @@ export function MediaLibraryClient({
   useEffect(() => {
     loadVideos();
   }, [loadVideos]);
+
+  // Đề xuất video tương tự trong kho dựa trên nội dung bài Micro Content
+  const loadRecommendations = useCallback(async () => {
+    if (!microContentId) return;
+    setRecLoading(true);
+    setRecError(null);
+    try {
+      const q = new URLSearchParams({
+        sid,
+        microContentId,
+        limit: "6",
+      });
+      const res = await fetch(`/api/videos/recommendations?${q.toString()}`, {
+        cache: "no-store",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Không thể tải gợi ý video tương tự.");
+      }
+      setRecommendations(Array.isArray(data.items) ? data.items : []);
+      setRecKeywords(Array.isArray(data.keywords) ? data.keywords : []);
+      if (typeof data.suggestedQuery === "string" && data.suggestedQuery.trim()) {
+        setSuggestedQuery(data.suggestedQuery.trim());
+        setYtQuery((prev) => (prev.trim() ? prev : data.suggestedQuery.trim()));
+      }
+    } catch (err) {
+      setRecError(err instanceof Error ? err.message : "Đã có lỗi xảy ra.");
+    } finally {
+      setRecLoading(false);
+    }
+  }, [sid, microContentId]);
+
+  useEffect(() => {
+    if (microContentId) {
+      void loadRecommendations();
+    }
+  }, [microContentId, loadRecommendations]);
+
+  // Tìm kiếm video YouTube có nội dung tương tự
+  const runYoutubeSearch = useCallback(
+    async (overrideQuery?: string, overrideLang?: "all" | "vi" | "en") => {
+      const effectiveQuery = (overrideQuery ?? ytQuery).trim();
+      const effectiveLang = overrideLang ?? ytLang;
+      if (!effectiveQuery) {
+        setYtError("Vui lòng nhập từ khóa hoặc dán liên kết YouTube.");
+        return;
+      }
+      setYtLoading(true);
+      setYtError(null);
+      setYtHasSearched(true);
+      try {
+        const q = new URLSearchParams({
+          sid,
+          q: effectiveQuery,
+          lang: effectiveLang,
+          limit: "9",
+        });
+        const res = await fetch(`/api/videos/youtube-search?${q.toString()}`, {
+          cache: "no-store",
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || "Không thể tìm kiếm video trên YouTube.");
+        }
+        setYtItems(Array.isArray(data.items) ? data.items : []);
+        setYtSource(typeof data.source === "string" ? data.source : null);
+      } catch (err) {
+        setYtError(err instanceof Error ? err.message : "Đã có lỗi xảy ra.");
+        setYtItems([]);
+      } finally {
+        setYtLoading(false);
+      }
+    },
+    [sid, ytQuery, ytLang],
+  );
+
+  // Tự động tìm kiếm YouTube lần đầu khi mở tab YouTube
+  useEffect(() => {
+    if (pickerTab === "YOUTUBE" && !ytHasSearched && !ytLoading) {
+      const initialQ = (ytQuery || suggestedQuery || microContentTitle || "").trim();
+      if (initialQ) {
+        if (!ytQuery.trim()) setYtQuery(initialQ);
+        void runYoutubeSearch(initialQ);
+      }
+    }
+  }, [pickerTab, ytHasSearched, ytLoading, ytQuery, suggestedQuery, microContentTitle, runYoutubeSearch]);
+
+  const handleAttachYoutubeItem = async (
+    item: YoutubeSearchItem,
+    opts?: { startSec?: number; endSec?: number },
+  ) => {
+    if (!onAttachYoutube) return;
+    setAttachingYtId(item.videoId);
+    setYtError(null);
+    try {
+      await onAttachYoutube({
+        youtubeVideoId: item.videoId,
+        title: item.title,
+        description: item.descriptionSnippet || undefined,
+        channelTitle: item.channelTitle || undefined,
+        durationMs: item.durationMs ?? undefined,
+        startSec: opts?.startSec,
+        endSec: opts?.endSec,
+        tags: recKeywords.slice(0, 4),
+      });
+      setAttachedYtId(item.videoId);
+      setPreviewYoutube(null);
+      await loadVideos();
+      await loadRecommendations();
+    } catch (err) {
+      setYtError(
+        err instanceof Error ? err.message : "Không thể gắn video YouTube vào bài học.",
+      );
+    } finally {
+      setAttachingYtId(null);
+    }
+  };
 
   // Polling nếu có video đang render hoặc upload
   useEffect(() => {
@@ -401,8 +633,449 @@ export function MediaLibraryClient({
     }
   };
 
+  const baseSuggestedQuery = (
+    suggestedQuery ||
+    microContentTitle ||
+    microContentDescription ||
+    ""
+  )
+    .trim()
+    .slice(0, 80);
+
   return (
     <div className="space-y-6">
+      {/* Subtabs khi mở bên trong trình chỉnh sửa Micro Content */}
+      {microContentId && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-1.5">
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => setPickerTab("LIBRARY")}
+              className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold transition ${
+                pickerTab === "LIBRARY"
+                  ? "bg-white text-indigo-700 shadow-sm ring-1 ring-slate-200"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <span>📚 Kho học liệu &amp; Đề xuất tương tự</span>
+              {recommendations.length > 0 && (
+                <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
+                  {recommendations.length} gợi ý
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setPickerTab("YOUTUBE")}
+              className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold transition ${
+                pickerTab === "YOUTUBE"
+                  ? "bg-white text-rose-700 shadow-sm ring-1 ring-rose-200"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <span className="inline-flex h-4 w-5 items-center justify-center rounded bg-rose-600 text-[9px] font-bold text-white">
+                ▶
+              </span>
+              <span>Tìm trên YouTube (nội dung tương tự)</span>
+            </button>
+          </div>
+          {baseSuggestedQuery && (
+            <span className="px-2 text-[11px] text-slate-500 truncate max-w-xs">
+              Chủ đề bài: <strong className="text-slate-700">{baseSuggestedQuery}</strong>
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Phần 1: Gợi ý video có nội dung tương tự trong Kho học liệu */}
+      {microContentId && pickerTab === "LIBRARY" && (
+        <div className="rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50/70 via-white to-sky-50/60 p-4 shadow-sm space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h4 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                <span>✨</span> Đề xuất video có nội dung tương tự trong kho
+              </h4>
+              <p className="text-xs text-slate-600 mt-0.5">
+                Xếp hạng theo mức độ trùng khớp tiêu đề, mô tả, chuẩn đầu ra (LO), slide nguồn và lời giảng.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const nextQ = baseSuggestedQuery || ytQuery;
+                  setYtQuery(nextQ);
+                  setPickerTab("YOUTUBE");
+                  if (nextQ) void runYoutubeSearch(nextQ);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 transition"
+              >
+                <span>▶</span> Tìm thêm trên YouTube
+              </button>
+            </div>
+          </div>
+
+          {recKeywords.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+              <span className="text-slate-500 font-medium">Từ khóa bài học:</span>
+              {recKeywords.map((kw) => (
+                <span
+                  key={kw}
+                  className="rounded-full bg-white border border-indigo-200 px-2 py-0.5 font-medium text-indigo-800"
+                >
+                  {kw}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {recLoading && (
+            <div className="py-6 text-center text-xs text-slate-500">
+              <div className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent mr-2 align-middle" />
+              Đang phân tích mức độ tương đồng với các video trong kho...
+            </div>
+          )}
+
+          {!recLoading && recError && (
+            <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              {recError}
+            </div>
+          )}
+
+          {!recLoading && !recError && recommendations.length === 0 && (
+            <div className="rounded-lg border border-dashed border-indigo-200 bg-white/80 p-4 text-xs text-slate-600 flex flex-wrap items-center justify-between gap-2">
+              <span>
+                Chưa tìm thấy video nào trong kho có từ khóa trùng khớp mạnh với bài học này. Bạn có thể tìm video trên YouTube hoặc chọn thủ công ở danh sách bên dưới.
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const nextQ = baseSuggestedQuery || ytQuery;
+                  setYtQuery(nextQ);
+                  setPickerTab("YOUTUBE");
+                  if (nextQ) void runYoutubeSearch(nextQ);
+                }}
+                className="rounded-md bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700"
+              >
+                ▶ Tìm trên YouTube ngay
+              </button>
+            </div>
+          )}
+
+          {!recLoading && recommendations.length > 0 && (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {recommendations.map((rec) => {
+                const isSelected = selectedAssetId === rec.asset_id || rec.isCurrentlyAttached;
+                const ytThumb = getAssetYoutubeThumbnail(rec);
+                return (
+                  <div
+                    key={rec.asset_id}
+                    className={`flex flex-col justify-between overflow-hidden rounded-lg border bg-white shadow-sm transition ${
+                      isSelected ? "border-indigo-600 ring-2 ring-indigo-500" : "border-slate-200"
+                    }`}
+                  >
+                    <div>
+                      <div className="relative aspect-video w-full bg-slate-900 overflow-hidden group/rec">
+                        {ytThumb ? (
+                          <img
+                            src={ytThumb}
+                            alt={rec.title}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <video
+                            src={`/api/videos/${rec.asset_id}/stream?sid=${encodeURIComponent(sid)}`}
+                            preload="metadata"
+                            className="h-full w-full object-cover"
+                          />
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setPreviewAsset(rec)}
+                          className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover/rec:opacity-100 transition text-white text-xs font-semibold gap-1.5"
+                        >
+                          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/25">
+                            ▶
+                          </span>
+                          Xem trước
+                        </button>
+                        <span className="absolute top-2 left-2 rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-bold text-white shadow">
+                          Khớp {rec.matchScore}%
+                        </span>
+                        <span
+                          className={`absolute top-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${
+                            rec.source_type === "AI_STUDIO"
+                              ? "bg-purple-600 text-white"
+                              : rec.source_type === "YOUTUBE"
+                                ? "bg-rose-600 text-white"
+                                : "bg-indigo-600 text-white"
+                          }`}
+                        >
+                          {rec.source_type === "AI_STUDIO"
+                            ? "AI Studio"
+                            : rec.source_type === "YOUTUBE"
+                              ? "YouTube"
+                              : "Upload"}
+                        </span>
+                        {rec.duration_ms && (
+                          <span className="absolute bottom-2 right-2 rounded bg-black/75 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                            {formatDuration(rec.duration_ms)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="p-3 space-y-1.5">
+                        <h5 className="text-xs font-bold text-slate-900 line-clamp-2" title={rec.title}>
+                          {rec.title}
+                        </h5>
+                        {rec.matchReasons && rec.matchReasons.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {rec.matchReasons.slice(0, 2).map((reason, idx) => (
+                              <span
+                                key={idx}
+                                className="rounded bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 text-[10px] text-indigo-800"
+                              >
+                                {reason}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="border-t border-slate-100 bg-slate-50 px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => onSelectVideo?.(rec)}
+                        className={`w-full rounded-md px-2.5 py-1.5 text-xs font-semibold transition ${
+                          isSelected
+                            ? "bg-indigo-600 text-white"
+                            : "bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200"
+                        }`}
+                      >
+                        {isSelected ? "✓ Đang gắn vào bài học" : "Chọn video này"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Phần 2: Tìm kiếm và gắn video YouTube tương tự */}
+      {microContentId && pickerTab === "YOUTUBE" && (
+        <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <span className="inline-flex h-5 w-6 items-center justify-center rounded bg-rose-600 text-[10px] font-bold text-white">
+                  ▶
+                </span>
+                Tìm kiếm video YouTube có nội dung tương tự
+              </h4>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Tìm theo từ khóa chủ đề hoặc dán trực tiếp liên kết YouTube (`youtube.com/watch?v=...`, `youtu.be/...`), xem trước và gắn trực tiếp vào bài học.
+              </p>
+            </div>
+            {ytSource && (
+              <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+                Nguồn: {ytSource}
+              </span>
+            )}
+          </div>
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void runYoutubeSearch();
+            }}
+            className="flex flex-col gap-3 sm:flex-row sm:items-center"
+          >
+            <input
+              type="text"
+              value={ytQuery}
+              onChange={(e) => setYtQuery(e.target.value)}
+              placeholder="Nhập chủ đề (VD: Merge Sort chia để trị) hoặc dán link YouTube..."
+              className="flex-1 rounded-lg border border-slate-300 px-3.5 py-2 text-sm focus:border-rose-500 focus:outline-none focus:ring-1 focus:ring-rose-500"
+            />
+            <div className="flex items-center gap-2">
+              <div className="flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-xs font-medium">
+                {(
+                  [
+                    { key: "all", label: "Tất cả" },
+                    { key: "vi", label: "Tiếng Việt" },
+                    { key: "en", label: "English" },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    onClick={() => {
+                      setYtLang(opt.key);
+                      if (ytQuery.trim()) {
+                        void runYoutubeSearch(ytQuery, opt.key);
+                      }
+                    }}
+                    className={`rounded-md px-2.5 py-1.5 transition ${
+                      ytLang === opt.key
+                        ? "bg-white text-slate-900 shadow-sm font-semibold"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="submit"
+                disabled={ytLoading || !ytQuery.trim()}
+                className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50 transition"
+              >
+                {ytLoading ? "Đang tìm..." : "Tìm trên YouTube"}
+              </button>
+            </div>
+          </form>
+
+          {/* Gợi ý từ khóa nhanh từ nội dung bài */}
+          {baseSuggestedQuery && (
+            <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+              <span className="text-slate-500">Gợi ý tìm nhanh:</span>
+              {[
+                baseSuggestedQuery,
+                `${baseSuggestedQuery} giải thích`,
+                `${baseSuggestedQuery} visualization`,
+              ].map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => {
+                    setYtQuery(preset);
+                    void runYoutubeSearch(preset);
+                  }}
+                  className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-slate-700 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 transition"
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {ytError && (
+            <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+              {ytError}
+            </div>
+          )}
+
+          {ytLoading && (
+            <div className="py-12 text-center text-slate-500">
+              <div className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-rose-600 border-t-transparent" />
+              <p className="mt-2 text-xs">Đang tìm kiếm video phù hợp trên YouTube...</p>
+            </div>
+          )}
+
+          {!ytLoading && ytHasSearched && !ytError && ytItems.length === 0 && (
+            <div className="rounded-lg border border-dashed border-slate-300 p-8 text-center text-xs text-slate-500">
+              Không tìm thấy kết quả YouTube phù hợp. Hãy thử rút gọn từ khóa hoặc dán trực tiếp link YouTube.
+            </div>
+          )}
+
+          {!ytLoading && ytItems.length > 0 && (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {ytItems.map((item) => {
+                const isAttaching = attachingYtId === item.videoId;
+                const isAttached = attachedYtId === item.videoId;
+                return (
+                  <div
+                    key={item.videoId}
+                    className={`flex flex-col justify-between overflow-hidden rounded-xl border bg-white shadow-sm transition hover:shadow-md ${
+                      isAttached ? "border-emerald-500 ring-2 ring-emerald-400" : "border-slate-200"
+                    }`}
+                  >
+                    <div>
+                      <div className="relative aspect-video w-full bg-slate-900 overflow-hidden group/yt">
+                        <img
+                          src={item.thumbnailUrl}
+                          alt={item.title}
+                          className="h-full w-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setYtStartInput("");
+                            setYtEndInput("");
+                            setPreviewYoutube(item);
+                          }}
+                          className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 group-hover/yt:opacity-100 transition text-white text-xs font-semibold gap-1.5"
+                        >
+                          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-rose-600 text-white shadow">
+                            ▶
+                          </span>
+                          Xem thử &amp; Cắt đoạn
+                        </button>
+                        {item.durationText && (
+                          <span className="absolute bottom-2 right-2 rounded bg-black/80 px-1.5 py-0.5 text-[11px] font-medium text-white">
+                            {item.durationText}
+                          </span>
+                        )}
+                      </div>
+                      <div className="p-3.5 space-y-1.5">
+                        <h5 className="text-sm font-semibold text-slate-900 line-clamp-2" title={item.title}>
+                          {item.title}
+                        </h5>
+                        <p className="text-xs font-medium text-slate-600 truncate">
+                          {item.channelTitle}
+                        </p>
+                        {(item.viewCountText || item.publishedText) && (
+                          <p className="text-[11px] text-slate-400">
+                            {[item.viewCountText, item.publishedText].filter(Boolean).join(" · ")}
+                          </p>
+                        )}
+                        {item.descriptionSnippet && (
+                          <p className="text-xs text-slate-500 line-clamp-2">
+                            {item.descriptionSnippet}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="border-t border-slate-100 bg-slate-50 px-3.5 py-2.5 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setYtStartInput("");
+                          setYtEndInput("");
+                          setPreviewYoutube(item);
+                        }}
+                        className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 transition"
+                      >
+                        ▶ Xem thử
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isAttaching || !onAttachYoutube}
+                        onClick={() => void handleAttachYoutubeItem(item)}
+                        className={`flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                          isAttached
+                            ? "bg-emerald-600 text-white"
+                            : "bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50"
+                        }`}
+                      >
+                        {isAttaching
+                          ? "Đang gắn..."
+                          : isAttached
+                            ? "✓ Đã gắn vào bài"
+                            : "+ Gắn vào bài học"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {(!microContentId || pickerTab === "LIBRARY") && (
+      <div className="space-y-6">
       {/* Top Banner Stats */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
@@ -555,11 +1228,19 @@ export function MediaLibraryClient({
                   <div className="relative aspect-video w-full bg-slate-900 flex items-center justify-center overflow-hidden">
                     {isReady ? (
                       <div className="relative w-full h-full group/video">
-                        <video
-                          src={`/api/videos/${video.asset_id}/stream?sid=${encodeURIComponent(sid)}`}
-                          preload="metadata"
-                          className="w-full h-full object-cover"
-                        />
+                        {video.source_type === "YOUTUBE" && getAssetYoutubeThumbnail(video) ? (
+                          <img
+                            src={getAssetYoutubeThumbnail(video)!}
+                            alt={video.title}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <video
+                            src={`/api/videos/${video.asset_id}/stream?sid=${encodeURIComponent(sid)}`}
+                            preload="metadata"
+                            className="w-full h-full object-cover"
+                          />
+                        )}
                         <button
                           type="button"
                           onClick={() => setPreviewAsset(video)}
@@ -595,10 +1276,16 @@ export function MediaLibraryClient({
                       className={`absolute top-2 left-2 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
                         video.source_type === "AI_STUDIO"
                           ? "bg-purple-600 text-white"
-                          : "bg-indigo-600 text-white"
+                          : video.source_type === "YOUTUBE"
+                            ? "bg-rose-600 text-white"
+                            : "bg-indigo-600 text-white"
                       }`}
                     >
-                      {video.source_type === "AI_STUDIO" ? "AI Studio" : "Upload"}
+                      {video.source_type === "AI_STUDIO"
+                        ? "AI Studio"
+                        : video.source_type === "YOUTUBE"
+                          ? "YouTube"
+                          : "Upload"}
                     </span>
 
                     {/* Visibility badge */}
@@ -648,8 +1335,16 @@ export function MediaLibraryClient({
 
                     {/* Meta info */}
                     <div className="mt-3 flex items-center justify-between text-[11px] text-slate-500 border-t border-slate-100 pt-2.5">
-                      <span>{video.creatorName || "Ẩn danh"}</span>
-                      <span>Dung lượng: {formatBytes(video.size_bytes)}</span>
+                      <span className="truncate pr-2">
+                        {video.source_type === "YOUTUBE" && video.ai_options?.channelTitle
+                          ? `Kênh: ${video.ai_options.channelTitle}`
+                          : video.creatorName || "Ẩn danh"}
+                      </span>
+                      <span>
+                        {video.source_type === "YOUTUBE"
+                          ? "Nguồn: YouTube"
+                          : `Dung lượng: ${formatBytes(video.size_bytes)}`}
+                      </span>
                     </div>
 
                     <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
@@ -719,6 +1414,8 @@ export function MediaLibraryClient({
           })}
         </div>
       )}
+      </div>
+      )}
 
       {/* Video Preview Modal */}
       {previewAsset && (
@@ -735,12 +1432,116 @@ export function MediaLibraryClient({
               </button>
             </div>
             <div className="aspect-video w-full bg-black">
-              <video
-                src={`/api/videos/${previewAsset.asset_id}/stream?sid=${encodeURIComponent(sid)}`}
-                controls
-                autoPlay
-                className="w-full h-full"
+              {previewAsset.source_type === "YOUTUBE" && getAssetYoutubeEmbedUrl(previewAsset) ? (
+                <iframe
+                  src={getAssetYoutubeEmbedUrl(previewAsset)!}
+                  title={previewAsset.title}
+                  className="w-full h-full border-0"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              ) : (
+                <video
+                  src={`/api/videos/${previewAsset.asset_id}/stream?sid=${encodeURIComponent(sid)}`}
+                  controls
+                  autoPlay
+                  className="w-full h-full"
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* YouTube Preview & Trim Modal */}
+      {previewYoutube && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <div className="relative w-full max-w-3xl overflow-hidden rounded-xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-900 px-4 py-3 text-white">
+              <div className="min-w-0 pr-4">
+                <h3 className="text-sm font-semibold truncate">{previewYoutube.title}</h3>
+                <p className="text-[11px] text-slate-300 truncate">
+                  {previewYoutube.channelTitle}
+                  {previewYoutube.durationText ? ` · ${previewYoutube.durationText}` : ""}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewYoutube(null)}
+                className="text-slate-400 hover:text-white text-base"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="aspect-video w-full bg-black">
+              <iframe
+                src={buildYoutubePreviewEmbedUrl(
+                  previewYoutube.videoId,
+                  ytStartInput,
+                  ytEndInput,
+                )}
+                title={previewYoutube.title}
+                className="w-full h-full border-0"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
               />
+            </div>
+            <div className="p-4 bg-slate-50 border-t border-slate-200 space-y-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 items-end">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700">
+                    Bắt đầu từ (giây, tùy chọn)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={ytStartInput}
+                    onChange={(e) => setYtStartInput(e.target.value)}
+                    placeholder="VD: 30"
+                    className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs focus:border-rose-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700">
+                    Kết thúc tại (giây, tùy chọn)
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={ytEndInput}
+                    onChange={(e) => setYtEndInput(e.target.value)}
+                    placeholder="VD: 180"
+                    className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs focus:border-rose-500 focus:outline-none"
+                  />
+                </div>
+                <div className="flex items-center justify-end gap-2">
+                  <a
+                    href={previewYoutube.watchUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                  >
+                    YouTube ↗
+                  </a>
+                  <button
+                    type="button"
+                    disabled={attachingYtId === previewYoutube.videoId || !onAttachYoutube}
+                    onClick={() => {
+                      const s = ytStartInput.trim() ? parseInt(ytStartInput.trim(), 10) : undefined;
+                      const e = ytEndInput.trim() ? parseInt(ytEndInput.trim(), 10) : undefined;
+                      void handleAttachYoutubeItem(previewYoutube, {
+                        startSec: s !== undefined && Number.isFinite(s) && s >= 0 ? s : undefined,
+                        endSec: e !== undefined && Number.isFinite(e) && e > 0 ? e : undefined,
+                      });
+                    }}
+                    className="rounded-md bg-rose-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+                  >
+                    {attachingYtId === previewYoutube.videoId
+                      ? "Đang gắn..."
+                      : "✓ Gắn vào bài học"}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>

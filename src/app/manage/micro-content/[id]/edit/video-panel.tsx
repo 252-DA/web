@@ -2,7 +2,11 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { MediaLibraryClient, VideoAsset } from "@/app/manage/media/media-library-client";
+import {
+  MediaLibraryClient,
+  type VideoAsset,
+  type YoutubeAttachPayload,
+} from "@/app/manage/media/media-library-client";
 
 export interface VoiceOption {
   id: string;
@@ -123,11 +127,20 @@ interface Script {
 interface Props {
   microContent: {
     id: string;
+    title?: string;
+    description?: string | null;
     courseId?: string;
     videoAssetId?: string | null;
     videoSource: string;
     videoStatus: string;
     videoDurationMs: number | null;
+    videoMimeType?: string | null;
+    youtubeVideoId?: string | null;
+    youtubeEmbedUrl?: string | null;
+    youtubeWatchUrl?: string | null;
+    youtubeChannelTitle?: string | null;
+    youtubeStartSec?: number | null;
+    youtubeEndSec?: number | null;
     videoError: string | null;
     aiPrompt?: string | null;
     lowText?: boolean;
@@ -164,7 +177,7 @@ export function VideoPanel({ microContent, sid }: Props) {
   const [source, setSource] = useState<"UPLOAD" | "AI" | "LIBRARY">(
     microContent.videoSource === "AI"
       ? "AI"
-      : microContent.videoAssetId
+      : microContent.videoSource === "YOUTUBE" || microContent.videoAssetId
       ? "LIBRARY"
       : (microContent.videoSource as "UPLOAD" | "AI") || "UPLOAD",
   );
@@ -544,6 +557,33 @@ export function VideoPanel({ microContent, sid }: Props) {
     }
   };
 
+  const handleAttachYoutube = async (payload: YoutubeAttachPayload) => {
+    setError(null);
+    setSaveSuccessMessage(null);
+    try {
+      const res = await fetch(`/api/videos/youtube-attach?sid=${encodeURIComponent(sid)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          microContentId: microContent.id,
+          ...payload,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Không thể gắn video YouTube vào bài giảng.");
+      }
+      setSaveSuccessMessage(
+        `Đã gắn video YouTube "${payload.title}" vào bài học thành công.`,
+      );
+      router.refresh();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Đã có lỗi xảy ra.";
+      setError(msg);
+      throw err;
+    }
+  };
+
   const handleGenerateScript = async () => {
     if (!microContent.sourceDocumentId) {
       setError(
@@ -774,29 +814,67 @@ export function VideoPanel({ microContent, sid }: Props) {
         <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
           <h3 className="text-base font-semibold text-slate-900 mb-3">Xem thử Video đã sẵn sàng</h3>
           <div className="overflow-hidden rounded-lg bg-black aspect-video max-w-2xl">
-            <video
-              controls
-              className="w-full h-full"
-              src={`/api/micro-content/${microContent.id}/video?sid=${encodeURIComponent(sid)}`}
-            >
-              {microContent.hasSubtitles && (
-                <track
-                  kind="subtitles"
-                  src={`/api/micro-content/${microContent.id}/subtitles?sid=${encodeURIComponent(sid)}`}
-                  srcLang="vi"
-                  label="Tiếng Việt"
-                  default
-                />
-              )}
-              Trình duyệt của bạn không hỗ trợ thẻ video.
-            </video>
+            {microContent.videoSource === "YOUTUBE" && microContent.youtubeEmbedUrl ? (
+              <iframe
+                src={microContent.youtubeEmbedUrl}
+                title={microContent.title || "Video YouTube"}
+                className="w-full h-full border-0"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+              />
+            ) : (
+              <video
+                controls
+                className="w-full h-full"
+                src={`/api/micro-content/${microContent.id}/video?sid=${encodeURIComponent(sid)}`}
+              >
+                {microContent.hasSubtitles && (
+                  <track
+                    kind="subtitles"
+                    src={`/api/micro-content/${microContent.id}/subtitles?sid=${encodeURIComponent(sid)}`}
+                    srcLang="vi"
+                    label="Tiếng Việt"
+                    default
+                  />
+                )}
+                Trình duyệt của bạn không hỗ trợ thẻ video.
+              </video>
+            )}
           </div>
-          <p className="mt-2 text-xs text-slate-500">
-            Thời lượng: {formatDuration(microContent.videoDurationMs)} · Tua video hoạt động mượt mà qua HTTP Range Stream
-            {microContent.hasSubtitles
-              ? ` · Phụ đề WebVTT (${microContent.sceneTimeline?.length ?? 0} cảnh).`
-              : "."}
-          </p>
+          {microContent.videoSource === "YOUTUBE" && microContent.youtubeEmbedUrl ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+              <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">
+                YouTube
+              </span>
+              {microContent.youtubeChannelTitle && (
+                <span>Kênh: {microContent.youtubeChannelTitle} ·</span>
+              )}
+              <span>Thời lượng: {formatDuration(microContent.videoDurationMs)}</span>
+              {(microContent.youtubeStartSec !== null || microContent.youtubeEndSec !== null) && (
+                <span>
+                  · Đoạn phát: {microContent.youtubeStartSec ?? 0}s –{" "}
+                  {microContent.youtubeEndSec !== null ? `${microContent.youtubeEndSec}s` : "hết"}
+                </span>
+              )}
+              {microContent.youtubeWatchUrl && (
+                <a
+                  href={microContent.youtubeWatchUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sky-600 hover:underline font-medium"
+                >
+                  Mở trên YouTube ↗
+                </a>
+              )}
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-slate-500">
+              Thời lượng: {formatDuration(microContent.videoDurationMs)} · Tua video hoạt động mượt mà qua HTTP Range Stream
+              {microContent.hasSubtitles
+                ? ` · Phụ đề WebVTT (${microContent.sceneTimeline?.length ?? 0} cảnh).`
+                : "."}
+            </p>
+          )}
         </div>
       )}
 
@@ -882,7 +960,7 @@ export function VideoPanel({ microContent, sid }: Props) {
                 : "text-slate-500 hover:text-slate-700"
             }`}
           >
-            📚 Chọn từ Kho học liệu (Video DAM)
+            📚 Chọn từ Kho học liệu & YouTube
           </button>
         </div>
 
@@ -1812,12 +1890,16 @@ export function VideoPanel({ microContent, sid }: Props) {
         {source === "LIBRARY" && (
           <div className="mt-6 space-y-4">
             <div className="rounded-lg bg-indigo-50 border border-indigo-200 p-4 text-xs text-indigo-900">
-              💡 <strong>Kho học liệu Video dùng chung</strong>: Chọn bất kỳ video nào từ kho lưu trữ (tải lên hoặc AI sinh) để gắn vào bài học này. Dung lượng lưu trữ trên MinIO được tái sử dụng 100%, không cần tải lên hay render lại!
+              💡 <strong>Kho học liệu & Tìm kiếm YouTube</strong>: Hệ thống tự động gợi ý các video có nội dung tương đồng nhất trong kho (dựa trên tiêu đề, chuẩn đầu ra LO, slide & kịch bản) hoặc cho phép tìm, xem thử và gắn trực tiếp video từ YouTube.
             </div>
             <MediaLibraryClient
               sid={sid}
               courseId={microContent.courseId || ""}
+              microContentId={microContent.id}
+              microContentTitle={microContent.title}
+              microContentDescription={microContent.description}
               onSelectVideo={handleAttachVideo}
+              onAttachYoutube={handleAttachYoutube}
               selectedAssetId={microContent.videoAssetId}
             />
           </div>
