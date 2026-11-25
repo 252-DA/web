@@ -70,9 +70,31 @@ interface SceneCheck {
 type SceneVisualMode = "SLIDE_STATIC" | "MANIM_AUTO" | "MANIM_TEMPLATE" | "MANIM_CUSTOM";
 
 const MANIM_TEMPLATE_OPTIONS = [
-  { id: "insertion_sort", label: "Straight Insertion Sort (Chèn trực tiếp)", defaultArray: "23, 78, 45, 8, 32, 56" },
-  { id: "merge_sort", label: "Merge Sort (Sắp xếp trộn — Chia để trị)", defaultArray: "38, 27, 43, 3, 9, 82" },
+  { id: "insertion_sort", label: "Straight Insertion Sort (Chèn trực tiếp — Full)", defaultArray: "23, 78, 45, 8, 32, 56" },
+  { id: "merge_sort", label: "Merge Sort (Chia để trị & Trộn 2 con trỏ — Full)", defaultArray: "38, 27, 43, 3, 9, 82" },
+  { id: "selection_sort", label: "Selection Sort (Chọn trực tiếp — Full)", defaultArray: "29, 10, 14, 37, 13, 8" },
+  { id: "bubble_sort", label: "Bubble Sort (Nổi bọt — Full)", defaultArray: "52, 18, 41, 9, 33, 24" },
+  { id: "quicksort", label: "QuickSort — Lomuto Partition (Full)", defaultArray: "38, 12, 45, 7, 29, 21" },
 ];
+
+const MANIM_PACE_OPTIONS = [
+  { value: 1.0, label: "Chậm vừa (Mặc định — dễ theo dõi)" },
+  { value: 1.35, label: "Rất chậm (giảng kỹ từng bước)" },
+  { value: 0.7, label: "Nhanh hơn (tóm tắt)" },
+];
+
+interface ManimPreviewState {
+  loading: boolean;
+  videoUrl?: string;
+  duration?: number | null;
+  sizeBytes?: number;
+  tierUsed?: string;
+  attempts?: number;
+  sourceCode?: string;
+  cached?: boolean;
+  error?: string;
+  errorCategory?: string;
+}
 
 interface Scene {
   title: string;
@@ -84,7 +106,7 @@ interface Scene {
   check?: SceneCheck;
   visual_mode?: SceneVisualMode;
   manim_template?: string;
-  manim_params?: { array?: number[]; title?: string };
+  manim_params?: { array?: number[]; title?: string; pace?: number };
   manim_source_code?: string;
   manim_attempts?: number;
   manim_error?: string | null;
@@ -171,6 +193,9 @@ export function VideoPanel({ microContent, sid }: Props) {
   const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState<string | null>(null);
   const [currentAudioSrc, setCurrentAudioSrc] = useState<string | null>(null);
+  const [manimPreviews, setManimPreviews] = useState<Record<number, ManimPreviewState>>({});
+  const [arrayDrafts, setArrayDrafts] = useState<Record<number, string>>({});
+  const manimPreviewUrlsRef = useRef<Record<number, string>>({});
 
   const [generatingScript, setGeneratingScript] = useState(
     microContent.scriptStatus === "GENERATING",
@@ -236,15 +261,143 @@ export function VideoPanel({ microContent, sid }: Props) {
     }
   }, [microContent.videoStatus, router]);
 
-  // Clean up audio preview on unmount
+  // Clean up audio & Manim video preview blobs on unmount
   useEffect(() => {
+    const urlsMap = manimPreviewUrlsRef.current;
     return () => {
       if (audioPreviewRef.current) {
         audioPreviewRef.current.pause();
         audioPreviewRef.current = null;
       }
+      Object.values(urlsMap).forEach((url) => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {}
+      });
     };
   }, []);
+
+  const parseArrayText = (raw: string): number[] | null => {
+    const arr = raw
+      .split(",")
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((n) => !Number.isNaN(n));
+    return arr.length >= 3 && arr.length <= 8 ? arr : null;
+  };
+
+  const closeManimPreview = (idx: number) => {
+    const prevUrl = manimPreviewUrlsRef.current[idx];
+    if (prevUrl) {
+      try {
+        URL.revokeObjectURL(prevUrl);
+      } catch {}
+      delete manimPreviewUrlsRef.current[idx];
+    }
+    setManimPreviews((prev) => {
+      const next = { ...prev };
+      delete next[idx];
+      return next;
+    });
+  };
+
+  const handlePreviewManimScene = async (idx: number, scene: Scene) => {
+    const visualMode = scene.visual_mode || "SLIDE_STATIC";
+    if (visualMode === "SLIDE_STATIC") return;
+
+    const draftText = arrayDrafts[idx];
+    const parsedDraft = typeof draftText === "string" ? parseArrayText(draftText) : null;
+    const effectiveParams = {
+      ...(scene.manim_params || {}),
+      ...(parsedDraft ? { array: parsedDraft } : {}),
+      pace: scene.manim_params?.pace ?? 1.0,
+    };
+    if (parsedDraft) {
+      updateScene(idx, { manim_params: effectiveParams });
+    }
+
+    setManimPreviews((prev) => ({
+      ...prev,
+      [idx]: {
+        ...prev[idx],
+        loading: true,
+        error: undefined,
+        errorCategory: undefined,
+      },
+    }));
+
+    try {
+      const res = await fetch(`/api/videos/manim-preview?sid=${encodeURIComponent(sid)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          visual_mode: visualMode,
+          title: scene.title || `Cảnh ${idx + 1}`,
+          bullets: scene.bullets || [],
+          narration: scene.narration || "",
+          manim_template: scene.manim_template || "insertion_sort",
+          manim_params: effectiveParams,
+          manim_source_code: scene.manim_source_code || undefined,
+          target_duration_seconds: 22,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.video_base64) {
+        setManimPreviews((prev) => ({
+          ...prev,
+          [idx]: {
+            loading: false,
+            error: data.error || "Không thể render cảnh Manim xem trước.",
+            errorCategory: data.error_category,
+            attempts: data.attempts,
+            sourceCode: data.source_code,
+          },
+        }));
+        return;
+      }
+
+      const binStr = atob(data.video_base64);
+      const bytes = new Uint8Array(binStr.length);
+      for (let i = 0; i < binStr.length; i++) {
+        bytes[i] = binStr.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: data.mime_type || "video/mp4" });
+      const objectUrl = URL.createObjectURL(blob);
+
+      const oldUrl = manimPreviewUrlsRef.current[idx];
+      if (oldUrl) {
+        try {
+          URL.revokeObjectURL(oldUrl);
+        } catch {}
+      }
+      manimPreviewUrlsRef.current[idx] = objectUrl;
+
+      setManimPreviews((prev) => ({
+        ...prev,
+        [idx]: {
+          loading: false,
+          videoUrl: objectUrl,
+          duration: typeof data.duration === "number" ? data.duration : null,
+          sizeBytes: typeof data.size_bytes === "number" ? data.size_bytes : undefined,
+          tierUsed: data.tier_used,
+          attempts: data.attempts,
+          sourceCode: data.source_code,
+          cached: Boolean(data.cached),
+        },
+      }));
+    } catch (err) {
+      setManimPreviews((prev) => ({
+        ...prev,
+        [idx]: {
+          loading: false,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Lỗi kết nối khi render cảnh Manim xem trước.",
+        },
+      }));
+    }
+  };
 
   const handleVoiceChange = (voiceId: string) => {
     setSelectedVoice(voiceId);
@@ -1337,34 +1490,60 @@ export function VideoPanel({ microContent, sid }: Props) {
                           <label className="text-xs font-semibold text-slate-700">
                             Chế độ hình ảnh của cảnh (Hybrid Composition)
                           </label>
-                          <select
-                            value={scene.visual_mode || "SLIDE_STATIC"}
-                            onChange={(e) => {
-                              const nextMode = e.target.value as SceneVisualMode;
-                              const patch: Partial<Scene> = { visual_mode: nextMode };
-                              if (nextMode === "MANIM_TEMPLATE" && !scene.manim_template) {
-                                patch.manim_template = "insertion_sort";
-                                patch.manim_params = { array: [23, 78, 45, 8, 32, 56] };
-                              }
-                              updateScene(idx, patch);
-                            }}
-                            className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-800 focus:border-indigo-500 focus:outline-none"
-                          >
-                            <option value="SLIDE_STATIC">📄 Slide tĩnh (Mặc định)</option>
-                            <option value="MANIM_AUTO">✨ Hoạt họa Manim AI tự sinh (MANIM_AUTO)</option>
-                            <option value="MANIM_TEMPLATE">🎬 Hoạt họa Mẫu thuật toán (MANIM_TEMPLATE)</option>
-                            <option value="MANIM_CUSTOM">💻 Mã nguồn Manim tùy chỉnh (MANIM_CUSTOM)</option>
-                          </select>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <select
+                              value={scene.visual_mode || "SLIDE_STATIC"}
+                              onChange={(e) => {
+                                const nextMode = e.target.value as SceneVisualMode;
+                                const patch: Partial<Scene> = { visual_mode: nextMode };
+                                if (nextMode === "MANIM_TEMPLATE" && !scene.manim_template) {
+                                  patch.manim_template = "insertion_sort";
+                                  patch.manim_params = { array: [23, 78, 45, 8, 32, 56], pace: 1.0 };
+                                }
+                                if (nextMode === "SLIDE_STATIC") {
+                                  closeManimPreview(idx);
+                                }
+                                updateScene(idx, patch);
+                              }}
+                              className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-800 focus:border-indigo-500 focus:outline-none"
+                            >
+                              <option value="SLIDE_STATIC">📄 Slide tĩnh (Mặc định)</option>
+                              <option value="MANIM_AUTO">✨ Hoạt họa Manim AI tự sinh (MANIM_AUTO)</option>
+                              <option value="MANIM_TEMPLATE">🎬 Hoạt họa Mẫu thuật toán (MANIM_TEMPLATE)</option>
+                              <option value="MANIM_CUSTOM">💻 Mã nguồn Manim tùy chỉnh (MANIM_CUSTOM)</option>
+                            </select>
+
+                            {scene.visual_mode && scene.visual_mode !== "SLIDE_STATIC" && (
+                              <button
+                                type="button"
+                                disabled={Boolean(manimPreviews[idx]?.loading)}
+                                onClick={() => handlePreviewManimScene(idx, scene)}
+                                className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60 transition shadow-sm"
+                              >
+                                {manimPreviews[idx]?.loading ? (
+                                  <>
+                                    <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white border-r-transparent" />
+                                    Đang render...
+                                  </>
+                                ) : (
+                                  <>
+                                    <span>▶</span>
+                                    Xem trước cảnh Manim
+                                  </>
+                                )}
+                              </button>
+                            )}
+                          </div>
                         </div>
 
                         {scene.visual_mode === "MANIM_AUTO" && (
                           <p className="text-[11px] text-indigo-700">
-                            AI (Coder ↔ Error Fixer, tối đa 3 vòng) sẽ tự động lập trình hoạt họa Manim khớp với lời giảng của cảnh này. Nếu lỗi sau 3 lần thử, hệ thống tự động lùi về Slide tĩnh và gắn cờ FLAGGED.
+                            AI (Coder ↔ Error Fixer, tối đa 3 vòng) sẽ tự động lập trình hoạt họa Manim khớp với lời giảng của cảnh này. Bạn có thể bấm <strong>Xem trước cảnh Manim</strong> để kiểm tra trước khi dựng cả bài học.
                           </p>
                         )}
 
                         {scene.visual_mode === "MANIM_TEMPLATE" && (
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 pt-1">
                             <div>
                               <label className="block text-[11px] font-medium text-slate-600 mb-1">
                                 Chọn mẫu thuật toán chuẩn hóa
@@ -1373,12 +1552,16 @@ export function VideoPanel({ microContent, sid }: Props) {
                                 value={scene.manim_template || "insertion_sort"}
                                 onChange={(e) => {
                                   const tpl = MANIM_TEMPLATE_OPTIONS.find((t) => t.id === e.target.value);
-                                  const parsedArr = tpl
-                                    ? tpl.defaultArray.split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !Number.isNaN(n))
-                                    : [23, 78, 45, 8, 32, 56];
+                                  const defaultStr = tpl ? tpl.defaultArray : "23, 78, 45, 8, 32, 56";
+                                  const parsedArr = parseArrayText(defaultStr) || [23, 78, 45, 8, 32, 56];
+                                  setArrayDrafts((prev) => ({ ...prev, [idx]: defaultStr }));
                                   updateScene(idx, {
                                     manim_template: e.target.value,
-                                    manim_params: { ...(scene.manim_params || {}), array: parsedArr },
+                                    manim_params: {
+                                      ...(scene.manim_params || {}),
+                                      array: parsedArr,
+                                      pace: scene.manim_params?.pace ?? 1.0,
+                                    },
                                   });
                                 }}
                                 className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none"
@@ -1392,25 +1575,56 @@ export function VideoPanel({ microContent, sid }: Props) {
                             </div>
                             <div>
                               <label className="block text-[11px] font-medium text-slate-600 mb-1">
-                                Mảng dữ liệu đầu vào (3–8 số nguyên, cách nhau bởi dấu phẩy)
+                                Mảng dữ liệu đầu vào (3–8 số nguyên)
                               </label>
                               <input
                                 type="text"
-                                defaultValue={(scene.manim_params?.array || [23, 78, 45, 8, 32, 56]).join(", ")}
-                                onBlur={(e) => {
-                                  const arr = e.target.value
-                                    .split(",")
-                                    .map((s) => parseInt(s.trim(), 10))
-                                    .filter((n) => !Number.isNaN(n));
-                                  if (arr.length >= 3 && arr.length <= 8) {
+                                value={
+                                  arrayDrafts[idx] !== undefined
+                                    ? arrayDrafts[idx]
+                                    : (scene.manim_params?.array || [23, 78, 45, 8, 32, 56]).join(", ")
+                                }
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setArrayDrafts((prev) => ({ ...prev, [idx]: val }));
+                                  const parsed = parseArrayText(val);
+                                  if (parsed) {
                                     updateScene(idx, {
-                                      manim_params: { ...(scene.manim_params || {}), array: arr },
+                                      manim_params: {
+                                        ...(scene.manim_params || {}),
+                                        array: parsed,
+                                        pace: scene.manim_params?.pace ?? 1.0,
+                                      },
                                     });
                                   }
                                 }}
                                 placeholder="Ví dụ: 38, 27, 43, 3, 9, 82"
                                 className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs font-mono focus:border-indigo-500 focus:outline-none"
                               />
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                                Tốc độ hoạt họa
+                              </label>
+                              <select
+                                value={String(scene.manim_params?.pace ?? 1.0)}
+                                onChange={(e) => {
+                                  const nextPace = parseFloat(e.target.value) || 1.0;
+                                  updateScene(idx, {
+                                    manim_params: {
+                                      ...(scene.manim_params || {}),
+                                      pace: nextPace,
+                                    },
+                                  });
+                                }}
+                                className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none"
+                              >
+                                {MANIM_PACE_OPTIONS.map((opt) => (
+                                  <option key={opt.value} value={String(opt.value)}>
+                                    {opt.label}
+                                  </option>
+                                ))}
+                              </select>
                             </div>
                           </div>
                         )}
@@ -1426,6 +1640,109 @@ export function VideoPanel({ microContent, sid }: Props) {
                               onChange={(e) => updateScene(idx, { manim_source_code: e.target.value })}
                               placeholder={"from manim import *\n\nclass GeneratedScene(Scene):\n    def construct(self):\n        ..."}
                               className="w-full rounded border border-slate-300 bg-slate-900 p-2.5 text-xs font-mono text-slate-100 focus:border-indigo-500 focus:outline-none"
+                            />
+                          </div>
+                        )}
+
+                        {/* Khung xem trước video Manim ngay trên thẻ cảnh */}
+                        {manimPreviews[idx]?.loading && (
+                          <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2.5 text-xs text-indigo-800 flex items-center gap-2">
+                            <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-indigo-600 border-r-transparent shrink-0" />
+                            <span>
+                              Đang render bản xem trước cảnh Manim... Lần đầu mất khoảng 15–35 giây, các lần sau phát tức thì từ bộ nhớ đệm.
+                            </span>
+                          </div>
+                        )}
+
+                        {!manimPreviews[idx]?.loading && manimPreviews[idx]?.error && (
+                          <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs text-rose-900 space-y-1.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-semibold">
+                                ⚠ Không thể xem trước cảnh Manim
+                                {manimPreviews[idx]?.errorCategory ? ` (${manimPreviews[idx]?.errorCategory})` : ""}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => closeManimPreview(idx)}
+                                className="text-[11px] text-rose-700 hover:underline"
+                              >
+                                Đóng
+                              </button>
+                            </div>
+                            <p className="whitespace-pre-wrap font-mono text-[11px] text-rose-800">
+                              {manimPreviews[idx]?.error}
+                            </p>
+                            {manimPreviews[idx]?.sourceCode && scene.visual_mode !== "MANIM_CUSTOM" && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateScene(idx, {
+                                    visual_mode: "MANIM_CUSTOM",
+                                    manim_source_code: manimPreviews[idx]?.sourceCode,
+                                  })
+                                }
+                                className="rounded border border-rose-300 bg-white px-2.5 py-1 text-[11px] font-medium text-rose-800 hover:bg-rose-100"
+                              >
+                                📋 Chuyển mã nguồn sang MANIM_CUSTOM để tự sửa
+                              </button>
+                            )}
+                          </div>
+                        )}
+
+                        {!manimPreviews[idx]?.loading && manimPreviews[idx]?.videoUrl && (
+                          <div className="rounded-lg border border-slate-800 bg-slate-950 p-2.5 space-y-2">
+                            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-300 px-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-semibold text-emerald-400">
+                                  🎬 Bản xem trước Manim
+                                </span>
+                                {typeof manimPreviews[idx]?.duration === "number" && (
+                                  <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-slate-200">
+                                    {manimPreviews[idx]?.duration?.toFixed(1)}s
+                                  </span>
+                                )}
+                                {manimPreviews[idx]?.tierUsed && (
+                                  <span className="rounded bg-indigo-900/70 border border-indigo-700 px-1.5 py-0.5 text-indigo-200">
+                                    {manimPreviews[idx]?.tierUsed}
+                                  </span>
+                                )}
+                                {manimPreviews[idx]?.cached && (
+                                  <span className="rounded bg-emerald-900/60 border border-emerald-700 px-1.5 py-0.5 text-emerald-200">
+                                    ⚡ Cache
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {manimPreviews[idx]?.sourceCode && scene.visual_mode !== "MANIM_CUSTOM" && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      updateScene(idx, {
+                                        visual_mode: "MANIM_CUSTOM",
+                                        manim_source_code: manimPreviews[idx]?.sourceCode,
+                                      })
+                                    }
+                                    className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-[11px] text-sky-300 hover:bg-slate-700"
+                                  >
+                                    📋 Mở mã trong MANIM_CUSTOM
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => closeManimPreview(idx)}
+                                  className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-[11px] text-slate-300 hover:bg-slate-700"
+                                >
+                                  Đóng
+                                </button>
+                              </div>
+                            </div>
+                            <video
+                              key={manimPreviews[idx]?.videoUrl}
+                              controls
+                              autoPlay
+                              playsInline
+                              src={manimPreviews[idx]?.videoUrl}
+                              className="w-full max-h-[360px] rounded bg-black"
                             />
                           </div>
                         )}
